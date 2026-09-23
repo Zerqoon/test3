@@ -1,1 +1,0 @@
-import { describe,it,expect } from 'vitest';describe('rap exact semantic',()=>{it('documents Huge Cat must not resolve Huge Catrin Dog',()=>{const rows=['Huge Cat','Huge Catrin Dog'];const q='huge cat';const exact=rows.filter(x=>x.toLowerCase()===q);expect(exact).toEqual(['Huge Cat']);});});

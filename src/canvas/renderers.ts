@@ -2,6 +2,7 @@ import { createCanvas, loadImage, GlobalFonts, type SKRSContext2D, type Image } 
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { Buffer } from 'node:buffer';
 import type { HistoryStats } from '../services/HistoryService.js';
 import type { RapResult } from '../services/RapService.js';
 import type { HistoryPoint } from '../types.js';
@@ -49,16 +50,18 @@ export interface PlayerCardRenderOptions extends HistoryRenderOptions {
 }
 
 // ============================================================================
-// COLOR PALETTE & STYLES
+// COLOR PALETTE & TYPES
 // ============================================================================
+
+type Paint = SKRSContext2D['fillStyle'];
+type Align = 'left' | 'center' | 'right';
 
 const C = {
   bgVoid: '#080210',
-  panelBgTop: '#230b3b',
-  panelBgBot: '#10041d',
+  panelBgTop: '#260B40',
+  panelBgBot: '#0E031A',
   panelBorder: '#A855F7',
   panelBorderGlow: '#D946EF',
-  panelInnerEdge: 'rgba(255, 255, 255, 0.22)',
   accentNeon: '#F472B6',
   accentPink: '#EC4899',
   accentCyan: '#38BDF8',
@@ -112,9 +115,100 @@ export function getTimeframeConfig(mode: TimeframeMode): { totalMs: number; buck
   }
 }
 
+export function extractBucketsForTimeframe(points: HistoryPoint[], totalMs: number, bucketCount: number, currentVal: number): number[] {
+  const buckets = new Array<number>(bucketCount).fill(0);
+  void currentVal;
+  if (!Array.isArray(points) || points.length < 2) return buckets;
+  const now = Date.now();
+  const step = totalMs / bucketCount;
+  const sorted = [...points].filter(p => Number.isFinite(p.ts) && Number.isFinite(p.value)).sort((a, b) => a.ts - b.ts);
+  for (let i = 0; i < bucketCount; i++) {
+    const start = now - (bucketCount - i) * step;
+    const end = start + step;
+    const a = sorted.filter(p => p.ts <= start).slice(-1)[0] ?? sorted[0];
+    const b = sorted.filter(p => p.ts <= end).slice(-1)[0] ?? a;
+    if (a && b) buckets[i] = Math.max(0, b.value - a.value);
+  }
+  return buckets;
+}
+
+export function buildClampedSmoothPath(ctx: SKRSContext2D, points: VectorPoint[], bottomY: number): void {
+  if (points.length <= 1) return;
+  if (points.length === 2) { ctx.lineTo(points[1]!.x, points[1]!.y); return; }
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = i > 0 ? points[i - 1]! : points[i]!;
+    const p1 = points[i]!;
+    const p2 = points[i + 1]!;
+    const p3 = i < points.length - 2 ? points[i + 2]! : p2;
+    if (p1.val === 0 && p2.val === 0) { ctx.lineTo(p2.x, bottomY); continue; }
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+  }
+}
+
 // ============================================================================
-// ASSET MANAGEMENT
+// DRAWING PRIMITIVES & ASSET LOADERS
 // ============================================================================
+
+function line(ctx: SKRSContext2D, x1: number, y1: number, x2: number, y2: number, color: string, width = 1): void {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function polygon(ctx: SKRSContext2D, pts: readonly (readonly [number, number])[], fill: Paint | null, stroke?: string, width = 1): void {
+  if (!pts.length) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pts[0]![0], pts[0]![1]);
+  pts.slice(1).forEach(p => ctx.lineTo(p[0], p[1]));
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.stroke(); }
+  ctx.restore();
+}
+
+function roundedPath(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
+}
+
+function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number, fill: Paint | null, stroke?: Paint | null, width = 1): void {
+  ctx.save();
+  roundedPath(ctx, x, y, w, h, r);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.stroke(); }
+  ctx.restore();
+}
+
+function drawDiamondStud(ctx: SKRSContext2D, cx: number, cy: number, size = 6): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.shadowColor = '#D946EF';
+  ctx.shadowBlur = 6;
+  ctx.fillRect(-size / 2, -size / 2, size, size);
+  ctx.restore();
+}
 
 interface ClanAssets {
   background: Image | null;
@@ -196,69 +290,22 @@ async function loadClanAssets(directory: string): Promise<ClanAssets> {
   return Object.fromEntries(entries) as unknown as ClanAssets;
 }
 
-// ============================================================================
-// PRIMITIVES & CARTOON GAME UI
-// ============================================================================
-
-function roundedPath(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const rr = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.lineTo(x + w - rr, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
-  ctx.lineTo(x + w, y + h - rr);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
-  ctx.lineTo(x + rr, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
-  ctx.lineTo(x, y + rr);
-  ctx.quadraticCurveTo(x, y, x + rr, y);
-  ctx.closePath();
-}
-
-function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number, fill: string | CanvasGradient | null, stroke?: string | CanvasGradient | null, width = 1): void {
-  ctx.save();
-  roundedPath(ctx, x, y, w, h, r);
-  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.stroke(); }
-  ctx.restore();
-}
-
-function drawDiamondStud(ctx: SKRSContext2D, cx: number, cy: number, size = 6): void {
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(Math.PI / 4);
-  ctx.fillStyle = '#FFFFFF';
-  ctx.shadowColor = '#D946EF';
-  ctx.shadowBlur = 6;
-  ctx.fillRect(-size / 2, -size / 2, size, size);
-  ctx.restore();
-}
-
-/**
- * Chunky Game Card with dual borders, corner studs, top gloss, and optional texture.
- */
 function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r = 24, glowColor = C.panelBorderGlow, assets?: ClanAssets): void {
   ctx.save();
-  // Deep card drop-shadow + neon backlight
   ctx.shadowColor = glowColor;
   ctx.shadowBlur = 24;
   ctx.shadowOffsetY = 8;
   rr(ctx, x, y, w, h, r, 'rgba(8, 2, 16, 0.94)');
   ctx.restore();
 
-  // Dark rich purple card body
   const grad = ctx.createLinearGradient(x, y, x, y + h);
   grad.addColorStop(0, '#260B40');
   grad.addColorStop(0.4, '#19062D');
   grad.addColorStop(1, '#0E031A');
 
-  // Outer primary neon stroke (thick cartoon line)
   rr(ctx, x, y, w, h, r, grad, '#A855F7', 3);
-
-  // Inner beveled highlight line
   rr(ctx, x + 3.5, y + 3.5, w - 7, h - 7, r - 3, null, 'rgba(240, 171, 252, 0.35)', 1.5);
 
-  // Panel texture blending
   if (assets?.panelTexture) {
     ctx.save();
     roundedPath(ctx, x + 4, y + 4, w - 8, h - 8, r - 4);
@@ -268,7 +315,6 @@ function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h:
     ctx.restore();
   }
 
-  // Top glossy curve highlight
   ctx.save();
   roundedPath(ctx, x + 4, y + 4, w - 8, h - 8, r - 4);
   ctx.clip();
@@ -279,7 +325,6 @@ function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h:
   ctx.fillRect(x, y, w, 60);
   ctx.restore();
 
-  // 4 Corner Diamond RPG Rivets
   drawDiamondStud(ctx, x + 12, y + 12, 5);
   drawDiamondStud(ctx, x + w - 12, y + 12, 5);
   drawDiamondStud(ctx, x + 12, y + h - 12, 5);
@@ -323,7 +368,7 @@ function drawCover(ctx: SKRSContext2D, img: Image | null, x: number, y: number, 
   ctx.restore();
 }
 
-function txt(ctx: SKRSContext2D, value: string, x: number, y: number, size: number, color = C.textLight, bold = false, align: 'left' | 'center' | 'right' = 'left', maxWidth?: number): void {
+function txt(ctx: SKRSContext2D, value: string, x: number, y: number, size: number, color = C.textLight, bold = false, align: Align = 'left', maxWidth?: number): void {
   ctx.save();
   ctx.font = `${bold ? 700 : 500} ${size}px ${bold ? DISPLAY : BODY}`;
   ctx.fillStyle = color;
@@ -334,7 +379,7 @@ function txt(ctx: SKRSContext2D, value: string, x: number, y: number, size: numb
   ctx.restore();
 }
 
-function caps(ctx: SKRSContext2D, value: string, x: number, y: number, size = 11, color = C.textMuted, align: 'left' | 'center' | 'right' = 'left', tracking = 1.6): void {
+function caps(ctx: SKRSContext2D, value: string, x: number, y: number, size = 11, color = C.textMuted, align: Align = 'left', tracking = 1.6): void {
   ctx.save();
   const t = String(value).toUpperCase();
   ctx.font = `700 ${size}px ${BODY}`;
@@ -363,7 +408,7 @@ function fitText(ctx: SKRSContext2D, value: string, maxWidth: number, size: numb
 }
 
 // ============================================================================
-// VECTOR ICONS & DECORATIONS
+// VECTOR ICONS & COMPATIBILITY EXPORTS
 // ============================================================================
 
 export function drawVectorStar(ctx: SKRSContext2D, cx: number, cy: number, radius: number, fillColor = '#FFFFFF', strokeColor = '#A855F7', lineWidth = 3): void {
@@ -425,8 +470,170 @@ export function drawLaurelWreath(ctx: SKRSContext2D, cx: number, cy: number, r: 
   ctx.restore();
 }
 
+export function drawVectorTrophy(ctx: SKRSContext2D, cx: number, cy: number, size: number, fillColor = '#F3E8FF', strokeColor = '#9333EA'): void {
+  ctx.save();
+  ctx.fillStyle = fillColor;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(cx - size * 0.4, cy - size * 0.4);
+  ctx.lineTo(cx + size * 0.4, cy - size * 0.4);
+  ctx.lineTo(cx + size * 0.26, cy + size * 0.06);
+  ctx.quadraticCurveTo(cx, cy + size * 0.35, cx - size * 0.26, cy + size * 0.06);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillRect(cx - 3, cy + size * 0.25, 6, size * 0.22);
+  rr(ctx, cx - size * 0.28, cy + size * 0.46, size * 0.56, size * 0.14, 3, fillColor, strokeColor, 1.8);
+  ctx.restore();
+}
+
+export function drawVectorClock(ctx: SKRSContext2D, cx: number, cy: number, radius: number, strokeColor = '#F3E8FF'): void {
+  ctx.save();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  line(ctx, cx, cy, cx, cy - radius * 0.55, strokeColor, 2.2);
+  line(ctx, cx, cy, cx + radius * 0.45, cy + radius * 0.1, strokeColor, 2.2);
+  ctx.restore();
+}
+
+export function drawVectorSpeedo(ctx: SKRSContext2D, cx: number, cy: number, radius: number, strokeColor = '#F3E8FF'): void {
+  ctx.save();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, Math.PI, 0);
+  ctx.stroke();
+  line(ctx, cx, cy, cx + radius * 0.52, cy - radius * 0.42, '#F472B6', 2.5);
+  ctx.restore();
+}
+
+export function drawVectorPieChart(ctx: SKRSContext2D, cx: number, cy: number, radius: number, percentage: number): void {
+  const pct = Math.max(0, Math.min(100, percentage));
+  ctx.save();
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = 'rgba(56, 18, 82, 0.9)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (pct > 0) {
+    const g = ctx.createLinearGradient(cx - radius, cy, cx + radius, cy);
+    g.addColorStop(0, '#D946EF');
+    g.addColorStop(1, '#38BDF8');
+    ctx.strokeStyle = g;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * pct) / 100);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export const drawVectorDonut = drawVectorPieChart;
+
+export function drawVectorBars(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, color = '#D946EF'): void {
+  const bw = w / 5;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y + h * 0.55, bw, h * 0.45);
+  ctx.fillRect(x + bw * 1.5, y + h * 0.35, bw, h * 0.65);
+  ctx.fillRect(x + bw * 3, y + h * 0.1, bw, h * 0.9);
+  ctx.restore();
+}
+
+export function drawVectorPickaxe(ctx: SKRSContext2D, cx: number, cy: number, size: number): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-0.55);
+  line(ctx, 0, -size * 0.35, 0, size * 0.4, '#C084FC', 3.5);
+  ctx.strokeStyle = '#F5D0FE';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.3, size * 0.4, Math.PI * 1.1, Math.PI * 1.9);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function drawVectorHeart(ctx: SKRSContext2D, cx: number, cy: number, size: number, color = '#F472B6'): void {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + size * 0.35);
+  ctx.bezierCurveTo(cx - size * 0.62, cy - size * 0.08, cx - size * 0.52, cy - size * 0.52, cx, cy - size * 0.18);
+  ctx.bezierCurveTo(cx + size * 0.52, cy - size * 0.52, cx + size * 0.62, cy - size * 0.08, cx, cy + size * 0.35);
+  ctx.fill();
+  ctx.restore();
+}
+
+export function drawGamePanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, radius = 20, fillColor = '#251036', bevelColor = '#0C0413', bevelHeight = 6, strokeColor?: string | null): void {
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.48)';
+  ctx.shadowBlur = 15;
+  ctx.shadowOffsetY = bevelHeight;
+  rr(ctx, x, y + bevelHeight, w, h, radius, bevelColor);
+  ctx.restore();
+  rr(ctx, x, y, w, h, radius, fillColor, strokeColor ?? '#A855F7', 2);
+}
+
+export function drawRibbonBanner(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, title: string, sub: string, angle = 0): void {
+  ctx.save();
+  ctx.translate(x + w / 2, y + h / 2);
+  ctx.rotate(angle);
+  ctx.translate(-w / 2, -h / 2);
+  drawGamePanel(ctx, 0, 0, w, h, 16, '#35104C', '#11061A', 6, '#D946EF');
+  drawVectorCrown(ctx, w / 2, 18, 28);
+  txt(ctx, title, w / 2, 48, 25, '#FFFFFF', true, 'center');
+  caps(ctx, sub, w / 2, 67, 9, '#E9D5FF', 'center', 1.4);
+  ctx.restore();
+}
+
+export function drawWoodenPlank(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, text: string, angle = 0): void {
+  ctx.save();
+  ctx.translate(x + w / 2, y + h / 2);
+  ctx.rotate(angle);
+  ctx.translate(-w / 2, -h / 2);
+  drawGamePanel(ctx, 0, 0, w, h, 12, '#32104A', '#09020F', 6, '#D946EF');
+  txt(ctx, text, w / 2, h / 2 + 7, fitText(ctx, text, w - 20, 16), '#FFF8FF', true, 'center');
+  ctx.restore();
+}
+
+export function drawHangingBanner(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, title: string, lines: string[], angle = 0): void {
+  ctx.save();
+  ctx.translate(x + w / 2, y);
+  ctx.rotate(angle);
+  ctx.translate(-w / 2, 0);
+  polygon(ctx, [[0, 0], [w, 0], [w, h - 16], [w / 2, h + 12], [0, h - 16]], '#32104A', '#D946EF', 2);
+  txt(ctx, title, w / 2, 26, 15, '#FFFFFF', true, 'center');
+  lines.slice(0, 4).forEach((s, i) => txt(ctx, s, w / 2, 50 + i * 16, 11, '#E9D5FF', false, 'center'));
+  ctx.restore();
+}
+
+export function drawChunkyGamePanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r = 18, bgGradTop = '#381151', bgGradBot = '#1A0827', bevelColor = '#09020F', bevelDepth = 6): void {
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.5)';
+  ctx.shadowBlur = 14;
+  ctx.shadowOffsetY = bevelDepth;
+  rr(ctx, x, y + bevelDepth, w, h, r, bevelColor);
+  ctx.restore();
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, bgGradTop);
+  g.addColorStop(1, bgGradBot);
+  rr(ctx, x, y, w, h, r, g, '#A855F7', 2);
+}
+
+export function drawCreamTile(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r = 16): void {
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, '#FFF8FF');
+  g.addColorStop(1, '#E9D5FF');
+  rr(ctx, x, y, w, h, r, g, '#A855F7', 2);
+}
+
 // ============================================================================
-// AVATAR FETCHING & CACHING
+// AVATAR FETCHING
 // ============================================================================
 
 interface CacheItem<T> { value: T; expires: number }
@@ -446,24 +653,9 @@ async function fetchImage(url: string): Promise<Image | null> {
     const u = new URL(url);
     if (!['https:', 'http:'].includes(u.protocol)) return null;
     const res = await fetch(u, { signal: AbortSignal.timeout(12_000) });
-    if (!res.ok || !res.body) return null;
-    const ct = res.headers.get('content-type') ?? '';
-    if (!ct.startsWith('image/')) return null;
-
-    const reader = res.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let len = 0;
-    const limit = 8 * 1024 * 1024;
-    try {
-      while (true) {
-        const n = await reader.read();
-        if (n.done) break;
-        len += n.value.byteLength;
-        if (len > limit) { await reader.cancel(); return null; }
-        chunks.push(n.value);
-      }
-    } finally { reader.releaseLock(); }
-    const img = await loadImage(Buffer.concat(chunks));
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    const img = await loadImage(Buffer.from(arrayBuffer));
     return img.width > 0 && img.height > 0 ? img : null;
   } catch { return null; }
 }
@@ -535,13 +727,9 @@ async function playerImage(userId: number | null, avatarUrl: string | null, over
 }
 
 // ============================================================================
-// STAGE & CHARACTER RENDERING
+// STAGE & CARTOON PANELS
 // ============================================================================
 
-/**
- * Draws the character in the center stage standing on the neon pedestal,
- * flanked by vibrant 3D pet companions and crystals.
- */
 function drawCentralCharacterStage(
   ctx: SKRSContext2D,
   cx: number, cy: number,
@@ -549,12 +737,11 @@ function drawCentralCharacterStage(
   assets: ClanAssets,
   rank: number | null,
 ): void {
-  // 1. Base Stage Platform
+  void rank;
   const platW = 500, platH = 150;
   const platX = cx - platW / 2;
   const platY = cy + 110;
 
-  // Platform ambient ground glow
   ctx.save();
   const groundGlow = ctx.createRadialGradient(cx, platY + 45, 20, cx, platY + 45, 240);
   groundGlow.addColorStop(0, 'rgba(217, 70, 239, 0.65)');
@@ -566,48 +753,30 @@ function drawCentralCharacterStage(
   ctx.fill();
   ctx.restore();
 
-  // Draw 3D Platform Asset
   drawContain(ctx, assets.platform, platX, platY, platW, platH, 1.0);
-
-  // 2. Glowing Crystals Flanking Platform Base
   drawContain(ctx, assets.crystals, platX - 35, platY + 15, 115, 125, 0.95);
   drawContainFlipped(ctx, assets.crystals, platX + platW - 80, platY + 15, 115, 125, true, 0.95);
 
-  // 3. Avatar Standing on Pedestal
   const avSize = 250;
   const avX = cx - avSize / 2;
   const avY = cy - 70;
 
   ctx.save();
   if (avatar) {
-    // Drop shadow under avatar onto the platform
     ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
     ctx.shadowBlur = 18;
     ctx.shadowOffsetY = 12;
-
-    // Draw full avatar / sticker avatar
     drawContain(ctx, avatar, avX, avY, avSize, avSize, 1.0);
   } else {
-    // Stylized Fallback Avatar Shield
     rr(ctx, cx - 75, cy - 20, 150, 150, 30, '#280D45', '#D946EF', 4);
     drawVectorCrown(ctx, cx, cy + 45, 60, '#FFF', '#C084FC', 3);
   }
   ctx.restore();
 
-  // 4. Companion Pets Surrounding Character
-  // Left Front: Cat mascot sitting proudly
   drawContain(ctx, assets.crystalCat ?? assets.cat, cx - 180, cy + 50, 140, 140, 1.0);
-
-  // Right Front: Bat mascot floating by side
   drawContain(ctx, assets.bat, cx + 55, cy + 55, 130, 130, 1.0);
-
-  // Top Right: Angel mascot hovering
   drawContain(ctx, assets.angel, cx + 115, cy - 130, 110, 110, 1.0);
 }
-
-// ============================================================================
-// CARTOON CARDS IMPLEMENTATION
-// ============================================================================
 
 function drawPlayerProfileCard(
   ctx: SKRSContext2D,
@@ -618,7 +787,6 @@ function drawPlayerProfileCard(
 ): void {
   drawCartoonCard(ctx, x, y, w, h, 24, C.panelBorderGlow, assets);
 
-  // Mini circular headshot badge
   const avR = 44;
   const avCx = x + 62;
   const avCy = y + h / 2 - 10;
@@ -644,17 +812,14 @@ function drawPlayerProfileCard(
   }
   ctx.restore();
 
-  // Level / Rank badge attached to avatar bottom
   rr(ctx, avCx - 24, avCy + avR - 12, 48, 22, 11, '#581C87', '#F0ABFC', 2);
   txt(ctx, rank ? `#${rank}` : '100', avCx, avCy + avR + 4, 13, '#FFFFFF', true, 'center');
 
-  // Username & Tag Stack
   const tx = x + 128;
   const cleanName = title || 'Player';
   txt(ctx, cleanName, tx, y + 54, fitText(ctx, cleanName, w - 145, 30), '#FFFFFF', true);
   caps(ctx, `@${cleanName.toLowerCase().replace(/\s+/g, '')}  •  [${tag || 'R3V0'}]`, tx, y + 80, 11, '#D8B4FE', 'left', 1.4);
 
-  // XP / Session Progress Bar
   const actVal = Math.max(0, Math.min(1, consistency ?? 0.8));
   const barW = w - 150;
   const barY = y + 104;
@@ -666,7 +831,7 @@ function drawPlayerProfileCard(
   if (actVal > 0) {
     const barGrad = ctx.createLinearGradient(tx, 0, tx + barW, 0);
     barGrad.addColorStop(0, '#A855F7');
-    barGrad.addColorStop(1, '#F472F6');
+    barGrad.addColorStop(1, '#F472B6');
     rr(ctx, tx, barY, barW * actVal, 10, 5, barGrad);
   }
 }
@@ -679,19 +844,15 @@ function drawCurrentStarsCard(
 ): void {
   drawCartoonCard(ctx, x, y, w, h, 24, C.panelBorderGlow, assets);
 
-  // Header Title
   drawVectorStar(ctx, x + 34, y + 36, 12, '#FFFFFF', '#D946EF', 2);
   caps(ctx, 'CURRENT STARS', x + 56, y + 42, 14, '#FFFFFF', 'left', 2.0);
 
-  // Big Glowing Star Icon on Left
   drawVectorStar(ctx, x + 62, y + 115, 38, '#F5D0FE', '#9333EA', 4);
 
-  // Massive Number
   const valStr = current === null ? '—' : fmt(current);
   txt(ctx, valStr, x + 124, y + 128, fitText(ctx, valStr, w - 145, 62), '#FFFFFF', true);
   caps(ctx, current === null ? '0 STARS VERIFIED' : `${fmtExact(current)} EXACT STARS`, x + 126, y + 154, 9, '#C4B5FD', 'left', 1.4);
 
-  // Cute Mascot peeking over top right border
   if (assets.angel) {
     drawContain(ctx, assets.angel, x + w - 90, y - 28, 80, 80, 1.0);
   }
@@ -705,23 +866,19 @@ function drawClanPositionCard(
 ): void {
   drawCartoonCard(ctx, x, y, w, h, 24, C.panelBorderGlow, assets);
 
-  // Header
   drawVectorCrown(ctx, x + 36, y + 34, 22, '#FFFFFF', '#D946EF', 2);
   caps(ctx, 'CLAN POSITION', x + 58, y + 42, 14, '#FFFFFF', 'left', 2.0);
 
-  // Big Rank with Laurel Wreath
   const rCx = x + 80, rCy = y + 115;
   drawLaurelWreath(ctx, rCx, rCy, 46);
   txt(ctx, rank ? `#${rank}` : '#1', rCx, rCy + 18, 52, '#FFFFFF', true, 'center');
 
-  // Right Side Info Box: Elite Member Badge & Leads
   const bx = x + 155;
   rr(ctx, bx, y + 68, w - 175, 42, 14, 'rgba(88, 28, 135, 0.65)', 'rgba(216, 180, 254, 0.45)', 1.5);
   drawVectorCrown(ctx, bx + 22, y + 89, 18, '#FFF', '#F0ABFC', 1.8);
   caps(ctx, 'ELITE MEMBER', bx + 42, y + 87, 10, '#FFFFFF', 'left', 1.6);
   caps(ctx, members ? `ROSTER: ${members} PLAYERS` : 'TOP 1%', bx + 42, y + 102, 8, '#D8B4FE', 'left', 1.2);
 
-  // Lead Metric
   caps(ctx, 'LEAD TO NEXT', bx, y + 138, 9, C.textDim, 'left', 1.6);
   txt(ctx, lead !== null ? `+${fmt(lead)} pts` : '+49.76m pts', bx, y + 162, 22, '#F472B6', true);
 }
@@ -734,24 +891,20 @@ function drawContributionCard(
 ): void {
   drawCartoonCard(ctx, x, y, w, h, 24, C.panelBorderGlow, assets);
 
-  // Header
   drawVectorStar(ctx, x + 34, y + 36, 11, '#FFFFFF', '#38BDF8', 2);
   caps(ctx, 'CONTRIBUTION', x + 56, y + 42, 14, '#FFFFFF', 'left', 2.0);
 
-  // Left circular share badge (96%)
   const badgeCx = x + 62, badgeCy = y + 115;
   rr(ctx, badgeCx - 36, badgeCy - 36, 72, 72, 36, 'rgba(88, 28, 135, 0.8)', '#38BDF8', 3);
   txt(ctx, share === null ? '—' : `${Math.round(share)}%`, badgeCx, badgeCy + 10, 28, '#FFFFFF', true, 'center');
   caps(ctx, 'SHARE', badgeCx, badgeCy + 26, 8, '#C4B5FD', 'center', 1.2);
 
-  // Main Points
   const tx = x + 120;
   const pts = userPoints ?? clanTotal ?? 0;
   const ptsStr = fmt(pts);
   txt(ctx, ptsStr, tx, y + 118, fitText(ctx, ptsStr, w - 210, 52), '#FFFFFF', true);
   caps(ctx, clanTotal ? `OF ${fmt(clanTotal)} TOTAL CLAN SCORE` : 'TOTAL CLAN SCORE', tx, y + 144, 9, '#C4B5FD', 'left', 1.4);
 
-  // Coins asset piled dynamically on the right corner
   if (assets.coins) {
     drawContain(ctx, assets.coins, x + w - 120, y + 70, 110, 95, 1.0);
   }
@@ -791,7 +944,6 @@ function drawContributionHistoryChart(
 ): void {
   drawCartoonCard(ctx, x, y, w, h, 24, C.panelBorderGlow, assets);
 
-  // Header Title
   drawVectorCrown(ctx, x + 36, y + 36, 18, '#FFFFFF', '#A855F7', 2);
   caps(ctx, 'CONTRIBUTION HISTORY', x + 56, y + 42, 15, '#FFFFFF', 'left', 1.8);
 
@@ -805,7 +957,6 @@ function drawContributionHistoryChart(
   const max = Math.max(...vals, 0);
   const yMax = max > 0 ? max * 1.15 : 100;
 
-  // Background Grid Lines
   for (let i = 0; i <= 3; i++) {
     const gy = py + (ph * i) / 3;
     ctx.strokeStyle = 'rgba(216, 180, 254, 0.12)';
@@ -817,7 +968,6 @@ function drawContributionHistoryChart(
     txt(ctx, max > 0 ? fmt(yMax * (1 - i / 3)) : (i === 3 ? '0' : ''), px - 12, gy + 4, 11, C.textDim, false, 'right');
   }
 
-  // Draw Vibrant Rounded Bars
   const count = Math.max(1, series.values.length);
   const slotW = pw / count;
   const barW = Math.max(10, Math.min(28, slotW * 0.58));
@@ -843,7 +993,6 @@ function drawContributionHistoryChart(
     ctx.restore();
   });
 
-  // Highlight Tooltip on Peak Bar (Just like Image 2)
   if (max > 0) {
     const peakIdx = series.values.indexOf(max);
     const pbx = px + slotW * peakIdx + slotW / 2;
@@ -856,14 +1005,12 @@ function drawContributionHistoryChart(
     txt(ctx, fmt(max), pillX + pillW / 2, pillY + 18, 14, '#FFFFFF', true, 'center');
     caps(ctx, 'RECORD PEAK', pillX + pillW / 2, pillY + 30, 8, '#F0ABFC', 'center', 1.2);
 
-    // Connecting Pin
     ctx.fillStyle = '#F472B6';
     ctx.beginPath();
     ctx.arc(pbx, pby, 4, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Time Ticks
   const hours = (series.end - series.start) / 3_600_000;
   const ticks = hours <= 6 ? 6 : 8;
   for (let i = 0; i <= ticks; i++) {
@@ -881,36 +1028,29 @@ function drawPerformancePanel(
 ): void {
   drawCartoonCard(ctx, x, y, w, h, 24, C.panelBorderGlow, assets);
 
-  // Header Title with Dropdown-like Pill
   drawVectorCrown(ctx, x + 34, y + 36, 18, '#FFFFFF', '#38BDF8', 2);
   caps(ctx, 'PERFORMANCE', x + 56, y + 42, 15, '#FFFFFF', 'left', 1.8);
 
   rr(ctx, x + w - 130, y + 24, 105, 26, 13, 'rgba(88, 28, 135, 0.65)', '#D8B4FE', 1);
   caps(ctx, '24H WINDOW ▾', x + w - 77, y + 41, 9, '#F5D0FE', 'center', 1.0);
 
-  // 4 Structured Rows
   const rows = [
     { label: 'Total Stars', val: gain === null ? '—' : fmt(gain), delta: '+18%' },
-    { label: 'Total Contribution', val: average === null ? '—' : fmt(average * 24), delta: '+27%' },
     { label: 'Daily Average', val: average === null ? '—' : fmt(average), delta: '+22%' },
     { label: 'Best Peak Spike', val: best === null ? '—' : fmt(best), delta: '+56%' },
+    { label: 'Current Pace', val: pace === null ? '—' : `${fmt(pace)}/h`, delta: '+12%' },
   ];
 
   rows.forEach((r, i) => {
     const ry = y + 74 + i * 54;
 
-    // Row subtle stripe
     if (i % 2 === 0) {
       rr(ctx, x + 16, ry - 14, w - 32, 46, 12, 'rgba(255, 255, 255, 0.03)');
     }
 
-    // Icon Bullet
     drawVectorStar(ctx, x + 34, ry + 10, 6, '#F5D0FE', '#A855F7', 1.5);
-
     caps(ctx, r.label, x + 50, ry + 14, 11, C.textMuted, 'left', 1.2);
     txt(ctx, r.val, x + w - 110, ry + 15, 19, '#FFFFFF', true, 'right');
-
-    // Green Uplift Indicator (▲ +XX%)
     txt(ctx, `▲ ${r.delta}`, x + w - 24, ry + 15, 14, C.accentGreen, true, 'right');
   });
 }
@@ -955,7 +1095,6 @@ export async function renderHistory(
     loadClanAssets(themeDir),
   ]);
 
-  // Deep High-Energy Purple Nebula Background
   ctx.fillStyle = C.bgVoid;
   ctx.fillRect(0, 0, w, h);
   drawCover(ctx, assets.background, 0, 0, w, h, 0.55);
@@ -966,7 +1105,6 @@ export async function renderHistory(
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, w, h);
 
-  // Top Title Bar & Brand
   drawContain(ctx, assets.logo, 35, 18, 115, 105, 1.0);
   txt(ctx, 'R3V0', 160, 68, 54, '#FFFFFF', true);
   caps(ctx, 'PLAYER HISTORY', 162, 98, 14, '#F472B6', 'left', 2.8);
@@ -981,7 +1119,6 @@ export async function renderHistory(
   caps(ctx, meta.event, w - 40, 94, 11, '#E9D5FF', 'right', 1.6);
   caps(ctx, meta.tag ? `CLAN [${meta.tag}]` : '[R3V0 CLAN]', w - 40, 112, 9, C.textDim, 'right', 1.4);
 
-  // Data processing
   const tf = getTimeframeConfig(selectedTimeframe);
   const now = options.now ?? Date.now();
   const series = historySeries(stats?.points, tf.totalMs, tf.buckets, now);
@@ -991,7 +1128,7 @@ export async function renderHistory(
   const gain = values.length ? values.reduce((a, b) => a + b, 0) : null;
   const average = gain === null ? null : gain / (tf.totalMs / 3_600_000);
   const best = values.length ? Math.max(...values) : null;
-  const last = series.values.at(-1) ?? null;
+  const last = series.values.length > 0 ? series.values[series.values.length - 1] ?? null : null;
   const pace = last === null ? null : last / (series.step / 3_600_000);
   const consistency = values.length ? values.filter(v => v > 0).length / values.length : null;
 
@@ -1002,22 +1139,17 @@ export async function renderHistory(
   const share = clanTotal && clanTotal > 0 && userPoints !== null ? Math.min(100, Math.max(0, (userPoints / clanTotal) * 100)) : null;
   const lead = rivalry?.behind && num(rivalry.behind.lead) !== null ? num(rivalry.behind.lead) : null;
 
-  // 1. CENTER DIORAMA HERO STAGE
   drawCentralCharacterStage(ctx, 800, 360, avatar, assets, rank);
 
-  // 2. LEFT COLUMN (Cards: Profile & Current Stars)
   drawPlayerProfileCard(ctx, 40, 155, 460, 225, title, meta.tag, rank, consistency, avatar, assets);
   drawCurrentStarsCard(ctx, 40, 405, 460, 195, current, assets);
 
-  // 3. RIGHT COLUMN (Cards: Clan Position & Contribution)
   drawClanPositionCard(ctx, 1100, 155, 460, 225, rank, members, lead, assets);
   drawContributionCard(ctx, 1100, 405, 460, 195, userPoints, clanTotal, share, assets);
 
-  // 4. BOTTOM ROW (Chart + Performance Panel)
   drawContributionHistoryChart(ctx, 40, 625, 1020, 325, series, assets);
   drawPerformancePanel(ctx, 1080, 625, 480, 325, gain, average, best, pace, assets);
 
-  // Footer Tagline
   caps(ctx, 'R3V0 INTELLIGENCE  •  OFFICIAL TELEMETRY', 45, 982, 9, C.textDim, 'left', 1.8);
   caps(ctx, 'PET SIMULATOR 99  •  ALL ASSETS VERIFIED', w - 45, 982, 9, C.textDim, 'right', 1.8);
 
@@ -1053,29 +1185,22 @@ export async function renderPlayerCard(
   drawCover(ctx, assets.background, 0, 0, w, h, 0.45);
 
   drawContain(ctx, assets.logo, (w - 200) / 2, 25, 200, 100, 1.0);
-
-  // Main Card
   drawCartoonCard(ctx, 40, 140, 560, 665, 26, C.panelBorderGlow, assets);
 
-  // Center Pedestal & Avatar
   const platW = 380, platH = 110;
   drawContain(ctx, assets.platform, (w - platW) / 2, 380, platW, platH, 1.0);
 
-  // Pets
   drawContain(ctx, assets.crystalCat ?? assets.cat, 50, 320, 110, 110, 1.0);
   drawContain(ctx, assets.bat, w - 160, 320, 110, 110, 1.0);
   drawContain(ctx, assets.angel, w - 150, 160, 95, 95, 1.0);
 
-  // Crystals
   drawContain(ctx, assets.crystals, 50, 420, 90, 90, 0.85);
   drawContainFlipped(ctx, assets.crystals, w - 140, 420, 90, 90, true, 0.85);
 
-  // Avatar Center
   if (avatar) {
     drawContain(ctx, avatar, (w - 220) / 2, 210, 220, 220, 1.0);
   }
 
-  // Identity texts
   const pName = title || 'Player';
   txt(ctx, pName, w / 2, 530, fitText(ctx, pName, 480, 40), '#FFFFFF', true, 'center');
   caps(ctx, meta.tag ? `[${meta.tag}] CLAN ROSTER` : '[R3V0] SQUAD', w / 2, 560, 12, '#D8B4FE', 'center', 1.6);
@@ -1114,7 +1239,6 @@ export async function renderRap(r: RapResult): Promise<Buffer> {
   txt(ctx, 'RAP TRACKER', 165, 62, 38, '#FFFFFF', true);
   caps(ctx, 'PET VALUATION & MARKET INTELLIGENCE', 167, 88, 10, C.textMuted, 'left', 2.2);
 
-  // Left Showcase: 350px
   drawCartoonCard(ctx, 40, 125, 350, 515, 24, C.panelBorderGlow, assets);
 
   const img = await loadRemote(r.imageUrl);
@@ -1131,7 +1255,6 @@ export async function renderRap(r: RapResult): Promise<Buffer> {
     drawContain(ctx, assets.coins, 115, 525, 200, 85, 0.85);
   }
 
-  // Right Variants: 750px
   drawCartoonCard(ctx, 410, 125, 750, 515, 24, C.panelBorderGlow, assets);
   txt(ctx, 'MARKET VARIANTS', 445, 172, 24, '#FFFFFF', true);
 
@@ -1157,52 +1280,4 @@ export async function renderRap(r: RapResult): Promise<Buffer> {
   caps(ctx, `BASELINE: ${r.baselineLabel ?? 'NORMAL'}`, 445, 608, 9, C.textDim, 'left', 1.8);
 
   return canvas.encode('png');
-}
-
-// ============================================================================
-// BACKWARD COMPATIBILITY EXPORTS
-// ============================================================================
-
-export const drawVectorDonut = (ctx: SKRSContext2D, cx: number, cy: number, radius: number, percentage: number): void => {
-  const pct = Math.max(0, Math.min(100, percentage));
-  ctx.save();
-  ctx.lineWidth = 10;
-  ctx.strokeStyle = 'rgba(56, 18, 82, 0.9)';
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.stroke();
-
-  if (pct > 0) {
-    const g = ctx.createLinearGradient(cx - radius, cy, cx + radius, cy);
-    g.addColorStop(0, '#D946EF');
-    g.addColorStop(1, '#38BDF8');
-    ctx.strokeStyle = g;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * pct) / 100);
-    ctx.stroke();
-  }
-  ctx.restore();
-};
-
-export function drawGamePanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, radius = 20, fillColor = '#251036', bevelColor = '#0C0413', bevelHeight = 6, strokeColor?: string | null): void {
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,.48)';
-  ctx.shadowBlur = 15;
-  ctx.shadowOffsetY = bevelHeight;
-  rr(ctx, x, y + bevelHeight, w, h, radius, bevelColor);
-  ctx.restore();
-  rr(ctx, x, y, w, h, radius, fillColor, strokeColor ?? '#A855F7', 2);
-}
-
-export function drawRibbonBanner(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, title: string, sub: string, angle = 0): void {
-  ctx.save();
-  ctx.translate(x + w / 2, y + h / 2);
-  ctx.rotate(angle);
-  ctx.translate(-w / 2, -h / 2);
-  drawGamePanel(ctx, 0, 0, w, h, 16, '#35104C', '#11061A', 6, '#D946EF');
-  drawVectorCrown(ctx, w / 2, 18, 28);
-  txt(ctx, title, w / 2, 48, 25, '#FFFFFF', true, 'center');
-  caps(ctx, sub, w / 2, 67, 9, '#E9D5FF', 'center', 1.4);
-  ctx.restore();
 }

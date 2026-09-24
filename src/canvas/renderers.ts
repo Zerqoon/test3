@@ -1,15 +1,14 @@
 import { createCanvas, loadImage, GlobalFonts, type SKRSContext2D, type Image } from '@napi-rs/canvas';
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
 import type { HistoryStats } from '../services/HistoryService.js';
 import type { RapResult } from '../services/RapService.js';
 import type { HistoryPoint } from '../types.js';
 
 // ============================================================================
-// R3V0 PLAYER HISTORY V10 — HIGH-ENERGY CARTOON CLAN EDITION (POLISHED)
-// Recreates the vibrant, chunky Pet Simulator 99 / MMORPG UI aesthetic.
+// R3V0 PURE VECTOR ENGINE V11 — HIGH-ENERGY CARTOON PS99 EDITION
+// Zero external asset dependencies. 100% procedural 4K graphics.
 // ============================================================================
 
 export type TimeframeMode = '30m' | '1h' | '3h' | '6h' | '12h' | '24h';
@@ -23,14 +22,6 @@ export interface ClanRivalryInfo {
   behind?: { name: string; lead: number } | null;
 }
 
-export interface VectorPoint { x: number; y: number; val: number }
-export interface TierStyle {
-  label: string;
-  color: string;
-  glowColor: string;
-  badgeBg: string;
-  badgeBorder: string;
-}
 export interface ClanLeaderboardEntry { rank: number; name: string; points: number }
 
 export interface HistoryRenderOptions {
@@ -48,34 +39,45 @@ export interface PlayerCardRenderOptions extends HistoryRenderOptions {
 }
 
 // ============================================================================
-// COLOR PALETTE & STYLING TOKENS
+// COLOR PALETTE & FONTS
 // ============================================================================
 
-type Paint = SKRSContext2D['fillStyle'];
-type Align = 'left' | 'center' | 'right';
-
 const C = {
-  bgVoid: '#07020E',
-  panelBgTop: '#2A0B47',
-  panelBgMid: '#1A072E',
-  panelBgBot: '#0E031A',
-  panelBevel: '#080112',
+  bgDark: '#080114',
+  panelBgTop: '#24083D',
+  panelBgMid: '#160429',
+  panelBgBot: '#0C0217',
+  panelBevel: '#05000A',
   panelBorder: '#A855F7',
-  panelBorderGlow: '#D946EF',
-  accentNeon: '#F472B6',
-  accentPink: '#EC4899',
+  panelGlow: '#D946EF',
+  accentPink: '#F472B6',
+  accentNeon: '#EC4899',
   accentCyan: '#38BDF8',
   accentTeal: '#2DD4BF',
   accentGreen: '#4ADE80',
-  accentYellow: '#FACC15',
+  accentGold: '#FBBF24',
   textLight: '#FFFFFF',
   textMuted: '#E9D5FF',
   textDim: '#A88DBE',
 };
 
-const DISPLAY = 'R3V0Display, DejaVu Sans, Impact, sans-serif';
-const BODY = 'R3V0Body, DejaVu Sans, Arial, sans-serif';
-let fontDirLoaded: string | null = null;
+const DISPLAY = 'R3V0Display, Montserrat, Arial Black, sans-serif';
+const BODY = 'R3V0Body, Inter, Segoe UI, sans-serif';
+let fontsLoaded = false;
+
+function registerOptionalFonts(directory?: string): void {
+  if (fontsLoaded) return;
+  const p = directory ? resolve(directory, 'fonts') : resolve(process.cwd(), 'assets/fonts');
+  if (existsSync(p)) {
+    try {
+      const displayPath = resolve(p, 'BarlowCondensed-SemiBold.ttf');
+      const bodyPath = resolve(p, 'Barlow-SemiBold.ttf');
+      if (existsSync(displayPath)) GlobalFonts.registerFromPath(displayPath, 'R3V0Display');
+      if (existsSync(bodyPath)) GlobalFonts.registerFromPath(bodyPath, 'R3V0Body');
+    } catch { /* fallback to system font stack */ }
+  }
+  fontsLoaded = true;
+}
 
 export function safeNum(val: number | null | undefined, fallback = 0): number {
   return typeof val === 'number' && Number.isFinite(val) ? val : fallback;
@@ -95,15 +97,6 @@ export function fmtExact(n: number | null | undefined): string {
   return safeNum(n, 0).toLocaleString('en-US');
 }
 
-export function getPerformanceTier(latestVal: number, avgVal: number): TierStyle {
-  if (latestVal <= 0) return { label: 'IDLE', color: '#C4B5FD', glowColor: 'rgba(196,181,253,.35)', badgeBg: 'rgba(76,29,149,.5)', badgeBorder: '#8B5CF6' };
-  const ratio = avgVal > 0 ? latestVal / avgVal : 1;
-  if (ratio < 0.6) return { label: 'WARMING UP', color: '#F9A8D4', glowColor: 'rgba(249,168,212,.4)', badgeBg: 'rgba(131,24,67,.5)', badgeBorder: '#EC4899' };
-  if (ratio < 1.3) return { label: 'STEADY PACE', color: '#E9D5FF', glowColor: 'rgba(233,213,255,.4)', badgeBg: 'rgba(88,28,135,.5)', badgeBorder: '#C084FC' };
-  if (ratio < 2.5) return { label: 'SURGING', color: '#67E8F9', glowColor: 'rgba(103,232,249,.5)', badgeBg: 'rgba(8,145,178,.45)', badgeBorder: '#22D3EE' };
-  return { label: 'OVERCLOCKED', color: '#F0ABFC', glowColor: 'rgba(240,171,252,.6)', badgeBg: 'rgba(147,51,234,.55)', badgeBorder: '#D946EF' };
-}
-
 export function getTimeframeConfig(mode: TimeframeMode): { totalMs: number; buckets: number; labels: string[] } {
   switch (mode) {
     case '30m': return { totalMs: 30 * 60_000, buckets: 14, labels: ['25m', '20m', '15m', '10m', '5m', 'NOW'] };
@@ -117,19 +110,8 @@ export function getTimeframeConfig(mode: TimeframeMode): { totalMs: number; buck
 }
 
 // ============================================================================
-// DRAWING PRIMITIVES & ASSET LOADERS
+// VECTOR DRAWING PRIMITIVES
 // ============================================================================
-
-function line(ctx: SKRSContext2D, x1: number, y1: number, x2: number, y2: number, color: string, width = 1): void {
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
-  ctx.restore();
-}
 
 function roundedPath(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const rr = Math.max(0, Math.min(r, w / 2, h / 2));
@@ -146,243 +128,42 @@ function roundedPath(ctx: SKRSContext2D, x: number, y: number, w: number, h: num
   ctx.closePath();
 }
 
-function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number, fill: Paint | null, stroke?: Paint | null, width = 1): void {
+function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number, fill?: string | CanvasGradient | null, stroke?: string | CanvasGradient | null, strokeWidth = 1): void {
   ctx.save();
   roundedPath(ctx, x, y, w, h, r);
   if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.stroke(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = strokeWidth; ctx.stroke(); }
   ctx.restore();
 }
 
-function drawDiamondStud(ctx: SKRSContext2D, cx: number, cy: number, size = 6): void {
+function drawDiamondStud(ctx: SKRSContext2D, cx: number, cy: number, size = 6, color = '#FFFFFF'): void {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(Math.PI / 4);
-  ctx.fillStyle = '#FFFFFF';
-  ctx.shadowColor = '#D946EF';
+  ctx.fillStyle = color;
+  ctx.shadowColor = C.panelGlow;
   ctx.shadowBlur = 6;
   ctx.fillRect(-size / 2, -size / 2, size, size);
   ctx.restore();
 }
 
-interface ClanAssets {
-  background: Image | null;
-  logo: Image | null;
-  frameMain: Image | null;
-  frameChart: Image | null;
-  panelTexture: Image | null;
-  platform: Image | null;
-  crystals: Image | null;
-  angel: Image | null;
-  bat: Image | null;
-  cat: Image | null;
-  crystalCat: Image | null;
-  coins: Image | null;
-  pillar: Image | null;
-  headerOrnament: Image | null;
-  sideOrnament: Image | null;
-  icons: Image | null;
-}
-
-function assetDir(explicit?: string): string {
-  if (explicit) return resolve(explicit);
-  const candidates = [
-    resolve(process.cwd(), 'assets/tactical'),
-    fileURLToPath(new URL('../../assets/tactical/', import.meta.url)),
-    fileURLToPath(new URL('../../../assets/tactical/', import.meta.url)),
-  ];
-  return candidates.find(p => existsSync(p)) ?? candidates[0]!;
-}
-
-function registerFonts(directory: string): void {
-  if (fontDirLoaded === directory) return;
-  const defs: [string, string][] = [
-    ['BarlowCondensed-SemiBold.ttf', 'R3V0Display'],
-    ['BarlowCondensed-Medium.ttf', 'R3V0Display'],
-    ['Barlow-SemiBold.ttf', 'R3V0Body'],
-    ['Barlow-Regular.ttf', 'R3V0Body'],
-  ];
-  for (const [file, alias] of defs) {
-    const p = resolve(directory, 'fonts', file);
-    if (existsSync(p)) {
-      try { GlobalFonts.registerFromPath(p, alias); } catch { /* ignore fallback */ }
-    }
-  }
-  fontDirLoaded = directory;
-}
-
-async function localImage(path: string): Promise<Image | null> {
-  try {
-    if (!existsSync(path)) return null;
-    const img = await loadImage(path);
-    return img.width > 0 && img.height > 0 ? img : null;
-  } catch { return null; }
-}
-
-async function loadClanAssets(directory: string): Promise<ClanAssets> {
-  const root = resolve(directory, '..');
-  const branding = resolve(root, 'branding');
-  const ui = resolve(branding, 'ui');
-  const names = {
-    background: resolve(ui, 'background.png'),
-    logo: resolve(branding, 'r3v0-logo.png'),
-    frameMain: resolve(ui, 'frame-main.png'),
-    frameChart: resolve(ui, 'frame-chart.png'),
-    panelTexture: resolve(ui, 'panel-texture.png'),
-    platform: resolve(ui, 'platform.png'),
-    crystals: resolve(ui, 'crystals.png'),
-    angel: resolve(ui, 'pet-angel.png'),
-    bat: resolve(ui, 'pet-bat.png'),
-    cat: resolve(ui, 'pet-cat.png'),
-    crystalCat: resolve(ui, 'crystal-cat-combo.png'),
-    coins: resolve(ui, 'coins.png'),
-    pillar: resolve(ui, 'pillar.png'),
-    headerOrnament: resolve(ui, 'header-ornament.png'),
-    sideOrnament: resolve(ui, 'side-ornament.png'),
-    icons: resolve(ui, 'icons-sheet.png'),
-  };
-  const entries = await Promise.all(Object.entries(names).map(async ([k, v]) => [k, await localImage(v)] as const));
-  return Object.fromEntries(entries) as unknown as ClanAssets;
-}
-
-/**
- * Chunky Pet Simulator 99 Cartoon Card with heavy 3D bevel & visible texture
- */
-function drawCartoonCard(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  r = 22,
-  glowColor = C.panelBorderGlow,
-  assets?: ClanAssets,
-): void {
-  const bevelH = 6;
-
-  // 1. Bottom 3D bevel / base drop shadow
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
-  ctx.shadowBlur = 18;
-  ctx.shadowOffsetY = 8;
-  rr(ctx, x, y + bevelH, w, h - bevelH, r, C.panelBevel);
-  ctx.restore();
-
-  // 2. Card surface gradient
-  const cardH = h - bevelH;
-  const grad = ctx.createLinearGradient(x, y, x, y + cardH);
-  grad.addColorStop(0, '#2C0D4A');
-  grad.addColorStop(0.35, '#1B0730');
-  grad.addColorStop(1, '#10031E');
-
-  rr(ctx, x, y, w, cardH, r, grad, C.panelBorder, 3);
-  rr(ctx, x + 3.5, y + 3.5, w - 7, cardH - 7, r - 3, null, 'rgba(240, 171, 252, 0.4)', 1.5);
-
-  // 3. Visible Cartoon Texture Overlay (boosted opacity & procedural dots fallback)
-  ctx.save();
-  roundedPath(ctx, x + 4, y + 4, w - 8, cardH - 8, r - 4);
-  ctx.clip();
-
-  if (assets?.panelTexture) {
-    ctx.globalAlpha = 0.18; // Crisp & visible
-    ctx.drawImage(assets.panelTexture, x, y, w, cardH);
-  } else {
-    // Crisp procedural honeycomb/checker pattern
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
-    for (let py = y; py < y + cardH; py += 16) {
-      for (let px = x; px < x + w; px += 16) {
-        if ((Math.floor(px / 16) + Math.floor(py / 16)) % 2 === 0) {
-          ctx.fillRect(px, py, 8, 8);
-        }
-      }
-    }
-  }
-
-  // 4. Glossy Highlight across top half
-  const gloss = ctx.createLinearGradient(x, y, x, y + 55);
-  gloss.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
-  gloss.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  ctx.fillStyle = gloss;
-  ctx.fillRect(x, y, w, 55);
-  ctx.restore();
-
-  // 5. Corner Diamond Studs
-  drawDiamondStud(ctx, x + 12, y + 12, 5);
-  drawDiamondStud(ctx, x + w - 12, y + 12, 5);
-  drawDiamondStud(ctx, x + 12, y + cardH - 12, 5);
-  drawDiamondStud(ctx, x + w - 12, y + cardH - 12, 5);
-}
-
-function drawContain(ctx: SKRSContext2D, img: Image | null, x: number, y: number, w: number, h: number, alpha = 1): void {
-  if (!img || img.width <= 0 || img.height <= 0) return;
-  const f = Math.min(w / img.width, h / img.height);
-  const dw = img.width * f, dh = img.height * f;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
-  ctx.restore();
-}
-
-function drawContainFlipped(ctx: SKRSContext2D, img: Image | null, x: number, y: number, w: number, h: number, flipX = false, alpha = 1): void {
-  if (!img || img.width <= 0 || img.height <= 0) return;
-  const f = Math.min(w / img.width, h / img.height);
-  const dw = img.width * f, dh = img.height * f;
-  const dx = x + (w - dw) / 2, dy = y + (h - dh) / 2;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  if (flipX) {
-    ctx.translate(dx + dw, dy);
-    ctx.scale(-1, 1);
-    ctx.drawImage(img, 0, 0, dw, dh);
-  } else {
-    ctx.drawImage(img, dx, dy, dw, dh);
-  }
-  ctx.restore();
-}
-
-function drawCover(ctx: SKRSContext2D, img: Image | null, x: number, y: number, w: number, h: number, alpha = 1): void {
-  if (!img || img.width <= 0 || img.height <= 0) return;
-  const f = Math.max(w / img.width, h / img.height);
-  const dw = img.width * f, dh = img.height * f;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
-  ctx.restore();
-}
-
-/**
- * Text renderer with subtle drop shadow for maximum MMORPG cartoon legibility
- */
-function txt(
-  ctx: SKRSContext2D,
-  value: string,
-  x: number, y: number,
-  size: number,
-  color = C.textLight,
-  bold = false,
-  align: Align = 'left',
-  maxWidth?: number,
-): void {
+function txt(ctx: SKRSContext2D, text: string, x: number, y: number, size: number, color = C.textLight, bold = false, align: 'left' | 'center' | 'right' = 'left', maxW?: number): void {
   ctx.save();
   ctx.font = `${bold ? 700 : 500} ${size}px ${bold ? DISPLAY : BODY}`;
   ctx.textAlign = align;
   ctx.textBaseline = 'alphabetic';
-
-  // Drop shadow
-  ctx.fillStyle = 'rgba(8, 2, 16, 0.85)';
-  if (maxWidth) {
-    ctx.fillText(String(value), x + 1.5, y + 2, maxWidth);
-  } else {
-    ctx.fillText(String(value), x + 1.5, y + 2);
-  }
-
-  // Foreground
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  if (maxW) ctx.fillText(text, x + 1.5, y + 2, maxW);
+  else ctx.fillText(text, x + 1.5, y + 2);
   ctx.fillStyle = color;
-  if (maxWidth) ctx.fillText(String(value), x, y, maxWidth);
-  else ctx.fillText(String(value), x, y);
+  if (maxW) ctx.fillText(text, x, y, maxW);
+  else ctx.fillText(text, x, y);
   ctx.restore();
 }
 
-function caps(ctx: SKRSContext2D, value: string, x: number, y: number, size = 11, color = C.textMuted, align: Align = 'left', tracking = 1.6): void {
+function caps(ctx: SKRSContext2D, text: string, x: number, y: number, size = 11, color = C.textMuted, align: 'left' | 'center' | 'right' = 'left', tracking = 1.6): void {
   ctx.save();
-  const t = String(value).toUpperCase();
+  const t = String(text).toUpperCase();
   ctx.font = `700 ${size}px ${BODY}`;
   ctx.fillStyle = color;
   ctx.textBaseline = 'alphabetic';
@@ -399,7 +180,7 @@ function caps(ctx: SKRSContext2D, value: string, x: number, y: number, size = 11
 function fitText(ctx: SKRSContext2D, value: string, maxWidth: number, size: number): number {
   ctx.save();
   let s = size;
-  while (s > 12) {
+  while (s > 11) {
     ctx.font = `700 ${s}px ${DISPLAY}`;
     if (ctx.measureText(value).width <= maxWidth) break;
     s -= 1;
@@ -409,14 +190,67 @@ function fitText(ctx: SKRSContext2D, value: string, maxWidth: number, size: numb
 }
 
 // ============================================================================
-// VECTOR ICONS & EMBLEMS
+// CHUNKY 3D CARTOON PANEL
 // ============================================================================
 
-export function drawVectorStar(ctx: SKRSContext2D, cx: number, cy: number, radius: number, fillColor = '#FFFFFF', strokeColor = '#A855F7', lineWidth = 3): void {
+function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r = 22): void {
+  const bevelH = 6;
+  const faceH = h - bevelH;
+
+  // 1. Dark Bevel Base / Drop Shadow
   ctx.save();
-  ctx.fillStyle = fillColor;
-  ctx.strokeStyle = strokeColor;
-  ctx.lineWidth = lineWidth;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+  ctx.shadowBlur = 18;
+  ctx.shadowOffsetY = 8;
+  rr(ctx, x, y + bevelH, w, faceH, r, C.panelBevel);
+  ctx.restore();
+
+  // 2. Card Surface Gradient
+  const grad = ctx.createLinearGradient(x, y, x, y + faceH);
+  grad.addColorStop(0, C.panelBgTop);
+  grad.addColorStop(0.4, C.panelBgMid);
+  grad.addColorStop(1, C.panelBgBot);
+  rr(ctx, x, y, w, faceH, r, grad, C.panelBorder, 3);
+  rr(ctx, x + 3.5, y + 3.5, w - 7, faceH - 7, r - 3, null, 'rgba(240, 171, 252, 0.35)', 1.5);
+
+  // 3. Crisp Hexagonal / Pattern Texture Overlay
+  ctx.save();
+  roundedPath(ctx, x + 4, y + 4, w - 8, faceH - 8, r - 4);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+  const step = 20;
+  for (let py = y; py < y + faceH; py += step) {
+    for (let px = x; px < x + w; px += step) {
+      if ((Math.floor(px / step) + Math.floor(py / step)) % 2 === 0) {
+        ctx.fillRect(px, py, step / 2, step / 2);
+      }
+    }
+  }
+
+  // 4. Gloss shine
+  const gloss = ctx.createLinearGradient(x, y, x, y + 55);
+  gloss.addColorStop(0, 'rgba(255, 255, 255, 0.2)');
+  gloss.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = gloss;
+  ctx.fillRect(x, y, w, 55);
+  ctx.restore();
+
+  // 5. Gem Studs
+  drawDiamondStud(ctx, x + 12, y + 12, 5);
+  drawDiamondStud(ctx, x + w - 12, y + 12, 5);
+  drawDiamondStud(ctx, x + 12, y + faceH - 12, 5);
+  drawDiamondStud(ctx, x + w - 12, y + faceH - 12, 5);
+}
+
+// ============================================================================
+// PROCEDURAL PS99 PETS & STAGE ASSETS (100% IN-ENGINE)
+// ============================================================================
+
+export function drawVectorStar(ctx: SKRSContext2D, cx: number, cy: number, radius: number, fill = '#FFF', stroke = '#A855F7', lw = 3): void {
+  ctx.save();
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lw;
   ctx.lineJoin = 'round';
   ctx.beginPath();
   for (let i = 0; i < 5; i++) {
@@ -426,86 +260,363 @@ export function drawVectorStar(ctx: SKRSContext2D, cx: number, cy: number, radiu
     ctx.lineTo(cx + Math.cos(b) * radius * 0.44, cy + Math.sin(b) * radius * 0.44);
   }
   ctx.closePath();
-  ctx.shadowColor = '#D946EF';
+  ctx.shadowColor = C.panelGlow;
   ctx.shadowBlur = 10;
   ctx.fill();
   ctx.stroke();
   ctx.restore();
 }
 
-export function drawVectorCrown(ctx: SKRSContext2D, cx: number, cy: number, width: number, fillColor = '#FFFFFF', strokeColor = '#9333EA', lineWidth = 2.5): void {
+export function drawVectorCrown(ctx: SKRSContext2D, cx: number, cy: number, width: number, fill = '#FBBF24', stroke = '#D97706'): void {
   const h = width * 0.6;
   ctx.save();
   ctx.lineJoin = 'round';
-  ctx.fillStyle = fillColor;
-  ctx.strokeStyle = strokeColor;
-  ctx.lineWidth = lineWidth;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.moveTo(cx - width / 2, cy + h / 2);
-  ctx.lineTo(cx - width / 2, cy - h * 0.15);
-  ctx.lineTo(cx - width * 0.26, cy + h * 0.06);
+  ctx.lineTo(cx - width / 2, cy - h * 0.2);
+  ctx.lineTo(cx - width * 0.25, cy + h * 0.1);
   ctx.lineTo(cx, cy - h / 2);
-  ctx.lineTo(cx + width * 0.26, cy + h * 0.06);
-  ctx.lineTo(cx + width / 2, cy - h * 0.15);
+  ctx.lineTo(cx + width * 0.25, cy + h * 0.1);
+  ctx.lineTo(cx + width / 2, cy - h * 0.2);
   ctx.lineTo(cx + width / 2, cy + h / 2);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = '#D946EF';
+  ctx.restore();
+}
+
+function drawProceduralCrystal(ctx: SKRSContext2D, cx: number, cy: number, size: number, color1 = '#E879F9', color2 = '#818CF8'): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const w = size * 0.5, h = size;
+  ctx.shadowColor = color1;
+  ctx.shadowBlur = 14;
+
+  // Left facet
   ctx.beginPath();
-  ctx.arc(cx, cy + h * 0.14, 3.5, 0, Math.PI * 2);
+  ctx.moveTo(0, -h / 2);
+  ctx.lineTo(-w, 0);
+  ctx.lineTo(0, h / 2);
+  ctx.closePath();
+  ctx.fillStyle = color1;
+  ctx.fill();
+
+  // Right facet
+  ctx.beginPath();
+  ctx.moveTo(0, -h / 2);
+  ctx.lineTo(w, 0);
+  ctx.lineTo(0, h / 2);
+  ctx.closePath();
+  ctx.fillStyle = color2;
+  ctx.fill();
+
+  // Center specular line
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, -h / 2);
+  ctx.lineTo(0, h / 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Pet Simulator 99 Iconic Block Pet: Crystal Cat
+ */
+function drawPetCat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const s = size;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.beginPath();
+  ctx.ellipse(0, s * 0.52, s * 0.48, s * 0.16, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ears
+  const earW = s * 0.28, earH = s * 0.32;
+  ctx.fillStyle = '#C084FC';
+  ctx.strokeStyle = '#581C87';
+  ctx.lineWidth = 3;
+  // Left ear
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.4, -s * 0.3);
+  ctx.lineTo(-s * 0.25, -s * 0.6);
+  ctx.lineTo(-s * 0.1, -s * 0.35);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // Right ear
+  ctx.beginPath();
+  ctx.moveTo(s * 0.4, -s * 0.3);
+  ctx.lineTo(s * 0.25, -s * 0.6);
+  ctx.lineTo(s * 0.1, -s * 0.35);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // Inner ears
+  ctx.fillStyle = '#F472B6';
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.35, -s * 0.32);
+  ctx.lineTo(-s * 0.25, -s * 0.52);
+  ctx.lineTo(-s * 0.16, -s * 0.36);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(s * 0.35, -s * 0.32);
+  ctx.lineTo(s * 0.25, -s * 0.52);
+  ctx.lineTo(s * 0.16, -s * 0.36);
+  ctx.closePath();
+  ctx.fill();
+
+  // Sześcienne ciało (Block Head)
+  const g = ctx.createLinearGradient(0, -s * 0.45, 0, s * 0.45);
+  g.addColorStop(0, '#E879F9');
+  g.addColorStop(1, '#7E22CE');
+  rr(ctx, -s * 0.45, -s * 0.45, s * 0.9, s * 0.9, s * 0.24, g, '#3B0764', 3.5);
+
+  // Big Shiny Eyes
+  const eyeR = s * 0.12;
+  [-s * 0.22, s * 0.22].forEach(ex => {
+    ctx.fillStyle = '#1E1B4B';
+    ctx.beginPath();
+    ctx.arc(ex, -s * 0.05, eyeR, 0, Math.PI * 2);
+    ctx.fill();
+    // Catchlight
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(ex - eyeR * 0.3, -s * 0.05 - eyeR * 0.3, eyeR * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Pink Nose & Cat Mouth :3
+  ctx.fillStyle = '#F472B6';
+  ctx.beginPath();
+  ctx.arc(0, s * 0.1, s * 0.045, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#3B0764';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(-s * 0.06, s * 0.18, s * 0.06, 0.2, Math.PI * 0.9);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(s * 0.06, s * 0.18, s * 0.06, 0.1, Math.PI * 0.8);
+  ctx.stroke();
+
+  // Forehead Gem
+  drawProceduralCrystal(ctx, 0, -s * 0.26, s * 0.22, '#38BDF8', '#818CF8');
+  ctx.restore();
+}
+
+/**
+ * Pet Simulator 99 Block Pet: Demon Bat
+ */
+function drawPetBat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const s = size;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.beginPath();
+  ctx.ellipse(0, s * 0.52, s * 0.48, s * 0.16, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bat Wings
+  ctx.fillStyle = '#311042';
+  ctx.strokeStyle = '#A855F7';
+  ctx.lineWidth = 2.5;
+  // Left Wing
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.4, 0);
+  ctx.quadraticCurveTo(-s * 0.8, -s * 0.4, -s * 0.85, -s * 0.1);
+  ctx.quadraticCurveTo(-s * 0.7, s * 0.2, -s * 0.4, s * 0.25);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // Right Wing
+  ctx.beginPath();
+  ctx.moveTo(s * 0.4, 0);
+  ctx.quadraticCurveTo(s * 0.8, -s * 0.4, s * 0.85, -s * 0.1);
+  ctx.quadraticCurveTo(s * 0.7, s * 0.2, s * 0.4, s * 0.25);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // Body
+  const g = ctx.createLinearGradient(0, -s * 0.45, 0, s * 0.45);
+  g.addColorStop(0, '#4C1D95');
+  g.addColorStop(1, '#1E0B38');
+  rr(ctx, -s * 0.42, -s * 0.42, s * 0.84, s * 0.84, s * 0.22, g, '#A855F7', 3);
+
+  // Glowing Cyan Demon Eyes
+  const eyeR = s * 0.11;
+  [-s * 0.2, s * 0.2].forEach(ex => {
+    ctx.shadowColor = '#38BDF8';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = '#38BDF8';
+    ctx.beginPath();
+    ctx.arc(ex, -s * 0.05, eyeR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(ex, -s * 0.05, eyeR * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.shadowBlur = 0;
+
+  // Little vampire fangs
+  ctx.fillStyle = '#FFFFFF';
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.1, s * 0.16);
+  ctx.lineTo(-s * 0.05, s * 0.28);
+  ctx.lineTo(0, s * 0.16);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(0, s * 0.16);
+  ctx.lineTo(s * 0.05, s * 0.28);
+  ctx.lineTo(s * 0.1, s * 0.16);
+  ctx.closePath();
   ctx.fill();
   ctx.restore();
 }
 
-export function drawLaurelWreath(ctx: SKRSContext2D, cx: number, cy: number, r: number): void {
+/**
+ * Pet Simulator 99 Block Pet: Angel Wisp with Halo
+ */
+function drawPetAngel(ctx: SKRSContext2D, cx: number, cy: number, size = 95): void {
   ctx.save();
+  ctx.translate(cx, cy);
+  const s = size;
+
+  // Floating Golden Halo
+  ctx.strokeStyle = '#FBBF24';
+  ctx.lineWidth = 4;
+  ctx.shadowColor = '#FBBF24';
+  ctx.shadowBlur = 12;
+  ctx.beginPath();
+  ctx.ellipse(0, -s * 0.55, s * 0.32, s * 0.1, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Angelic Wings
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
   ctx.strokeStyle = '#F0ABFC';
+  ctx.lineWidth = 2;
+  // Left Wing
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.35, -s * 0.1);
+  ctx.quadraticCurveTo(-s * 0.75, -s * 0.5, -s * 0.7, 0);
+  ctx.quadraticCurveTo(-s * 0.55, s * 0.3, -s * 0.35, s * 0.15);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // Right Wing
+  ctx.beginPath();
+  ctx.moveTo(s * 0.35, -s * 0.1);
+  ctx.quadraticCurveTo(s * 0.75, -s * 0.5, s * 0.7, 0);
+  ctx.quadraticCurveTo(s * 0.55, s * 0.3, s * 0.35, s * 0.15);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // Pearlescent Body
+  const g = ctx.createLinearGradient(0, -s * 0.4, 0, s * 0.4);
+  g.addColorStop(0, '#FFFFFF');
+  g.addColorStop(0.5, '#F5D0FE');
+  g.addColorStop(1, '#D8B4FE');
+  rr(ctx, -s * 0.38, -s * 0.38, s * 0.76, s * 0.76, s * 0.22, g, '#C084FC', 3);
+
+  // Cute closed smiling eyes
+  ctx.strokeStyle = '#6B21A8';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  [-s * 0.18, s * 0.18].forEach(ex => {
+    ctx.beginPath();
+    ctx.arc(ex, -s * 0.04, s * 0.08, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+  });
+
+  // Rosy Cheeks
+  ctx.fillStyle = 'rgba(244, 114, 182, 0.5)';
+  ctx.beginPath();
+  ctx.arc(-s * 0.22, s * 0.1, s * 0.06, 0, Math.PI * 2);
+  ctx.arc(s * 0.22, s * 0.1, s * 0.06, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * 3D Isometric Floating Rune Pedestal (Centerpiece)
+ */
+function drawFloatingPedestal(ctx: SKRSContext2D, cx: number, cy: number, w = 500, h = 130): void {
+  ctx.save();
+  // Ambient glow beneath
+  const bgGlow = ctx.createRadialGradient(cx, cy + 30, 20, cx, cy + 30, w * 0.55);
+  bgGlow.addColorStop(0, 'rgba(217, 70, 239, 0.7)');
+  bgGlow.addColorStop(0.5, 'rgba(147, 51, 234, 0.25)');
+  bgGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = bgGlow;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 30, w * 0.55, h * 0.45, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Floating Runic Outer Ring
+  ctx.strokeStyle = 'rgba(244, 114, 182, 0.6)';
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.arc(cx, cy, r, Math.PI * 0.32, Math.PI * 1.15, true);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, Math.PI * 0.68, -Math.PI * 0.15, false);
+  ctx.ellipse(cx, cy + 15, w * 0.52, h * 0.35, 0, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Mini leaves
-  for (let i = 0; i < 4; i++) {
-    const a1 = Math.PI * 0.45 + i * 0.5;
-    const a2 = Math.PI * 0.55 - i * 0.5;
-    ctx.fillStyle = '#F472B6';
-    ctx.fillRect(cx + Math.cos(a1) * (r + 4), cy + Math.sin(a1) * (r + 4), 4, 4);
-    ctx.fillRect(cx + Math.cos(a2) * (r + 4), cy + Math.sin(a2) * (r + 4), 4, 4);
-  }
+  // Pedestal Lower Bevel (3D depth)
+  const bevelH = 34;
+  const polyLower: [number, number][] = [
+    [cx - w * 0.42, cy],
+    [cx + w * 0.42, cy],
+    [cx + w * 0.38, cy + bevelH],
+    [cx - w * 0.38, cy + bevelH],
+  ];
+  ctx.fillStyle = '#1A062E';
+  ctx.beginPath();
+  ctx.moveTo(polyLower[0][0], polyLower[0][1]);
+  polyLower.forEach(p => ctx.lineTo(p[0], p[1]));
+  ctx.closePath();
+  ctx.fill();
+
+  // Pedestal Top Surface (Glowing crystal slab)
+  const topGrad = ctx.createLinearGradient(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
+  topGrad.addColorStop(0, '#581C87');
+  topGrad.addColorStop(0.5, '#3B0764');
+  topGrad.addColorStop(1, '#24083D');
+  ctx.fillStyle = topGrad;
+  ctx.strokeStyle = '#F0ABFC';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, w * 0.42, h * 0.26, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Inner Rune Circle
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, w * 0.28, h * 0.16, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Flanking Procedural Crystal Clusters
+  drawProceduralCrystal(ctx, cx - w * 0.4, cy - 10, 48, '#E879F9', '#38BDF8');
+  drawProceduralCrystal(ctx, cx - w * 0.35, cy + 10, 32, '#F472B6', '#C084FC');
+  drawProceduralCrystal(ctx, cx + w * 0.4, cy - 10, 48, '#38BDF8', '#E879F9');
+  drawProceduralCrystal(ctx, cx + w * 0.35, cy + 10, 32, '#C084FC', '#F472B6');
   ctx.restore();
 }
-
-export function drawVectorPieChart(ctx: SKRSContext2D, cx: number, cy: number, radius: number, percentage: number): void {
-  const pct = Math.max(0, Math.min(100, safeNum(percentage, 0)));
-  ctx.save();
-  ctx.lineWidth = 11;
-  ctx.strokeStyle = 'rgba(56, 18, 82, 0.85)';
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.stroke();
-
-  if (pct > 0) {
-    const g = ctx.createLinearGradient(cx - radius, cy, cx + radius, cy);
-    g.addColorStop(0, '#D946EF');
-    g.addColorStop(1, '#38BDF8');
-    ctx.strokeStyle = g;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * pct) / 100);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-export const drawVectorDonut = drawVectorPieChart;
 
 // ============================================================================
-// AVATAR FETCHING & CACHING
+// AVATAR FETCHING
 // ============================================================================
 
 interface CacheItem<T> { value: T; expires: number }
@@ -524,7 +635,7 @@ async function fetchImage(url: string): Promise<Image | null> {
   try {
     const u = new URL(url);
     if (!['https:', 'http:'].includes(u.protocol)) return null;
-    const res = await fetch(u, { signal: AbortSignal.timeout(12_000) });
+    const res = await fetch(u, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return null;
     const arrayBuffer = await res.arrayBuffer();
     const img = await loadImage(Buffer.from(arrayBuffer));
@@ -567,7 +678,7 @@ async function fullBodyUrl(userId: number): Promise<string | null> {
   const p = (async () => {
     try {
       const res = await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userId}&size=420x420&format=Png&isCircular=false`, {
-        signal: AbortSignal.timeout(12_000),
+        signal: AbortSignal.timeout(10_000),
         headers: { Accept: 'application/json' },
       });
       if (!res.ok) return null;
@@ -599,206 +710,144 @@ async function playerImage(userId: number | null, avatarUrl: string | null, over
 }
 
 // ============================================================================
-// MID SECTION PANELS & STAGE
+// STAGE & UI PANELS
 // ============================================================================
 
-/**
- * Centered character showcase with platform and side pets (strictly clamped bounds)
- */
-function drawCentralCharacterStage(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  avatar: Image | null,
-  assets: ClanAssets,
-  rank: number | null,
-): void {
+function drawStage(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, avatar: Image | null, rank: number | null): void {
   const cx = x + w / 2;
-  const cy = y + h / 2 - 15;
+  const cy = y + h / 2 + 10;
 
-  // Platform position
-  const platW = 480, platH = 110;
-  const platX = cx - platW / 2;
-  const platY = cy + 90;
+  // 1. Procedural 3D Pedestal
+  drawFloatingPedestal(ctx, cx, cy + 50, 480, 130);
 
-  // Ground radial glow
-  ctx.save();
-  const groundGlow = ctx.createRadialGradient(cx, platY + 45, 10, cx, platY + 45, 230);
-  groundGlow.addColorStop(0, 'rgba(217, 70, 239, 0.7)');
-  groundGlow.addColorStop(0.5, 'rgba(147, 51, 234, 0.25)');
-  groundGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = groundGlow;
-  ctx.beginPath();
-  ctx.ellipse(cx, platY + 45, 230, 50, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-
-  // Platform graphic
-  drawContain(ctx, assets.platform, platX, platY, platW, platH, 1.0);
-
-  // Crystals on platform edges
-  drawContain(ctx, assets.crystals, platX - 25, platY + 15, 95, 100, 0.95);
-  drawContainFlipped(ctx, assets.crystals, platX + platW - 70, platY + 15, 95, 100, true, 0.95);
-
-  // Full-body avatar standing on platform
-  const avSize = 250;
-  const avX = cx - avSize / 2;
-  const avY = cy - 80;
-
-  ctx.save();
+  // 2. Avatar on Platform
   if (avatar) {
+    ctx.save();
     ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-    ctx.shadowBlur = 18;
-    ctx.shadowOffsetY = 12;
-    drawContain(ctx, avatar, avX, avY, avSize, avSize, 1.0);
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetY = 10;
+    const avS = 250;
+    const dw = Math.min(avS, avS * (avatar.width / avatar.height));
+    const dh = avS;
+    ctx.drawImage(avatar, cx - dw / 2, cy - 145, dw, dh);
+    ctx.restore();
   } else {
-    rr(ctx, cx - 65, cy - 25, 130, 130, 26, '#280D45', '#D946EF', 4);
-    drawVectorCrown(ctx, cx, cy + 30, 54, '#FFF', '#C084FC', 3);
+    drawVectorCrown(ctx, cx, cy - 40, 90, '#FBBF24', '#B45309');
   }
-  ctx.restore();
 
-  // Companion pets (flanking safely inside center stage area)
-  drawContain(ctx, assets.crystalCat ?? assets.cat, cx - 210, cy + 40, 115, 115, 1.0);
-  drawContain(ctx, assets.bat, cx + 95, cy + 40, 115, 115, 1.0);
-  drawContain(ctx, assets.angel, cx + 130, cy - 110, 95, 95, 1.0);
+  // 3. Companion Block Pets flanking the player
+  drawPetCat(ctx, cx - 180, cy + 25, 115);
+  drawPetBat(ctx, cx + 180, cy + 25, 115);
+  drawPetAngel(ctx, cx + 185, cy - 110, 95);
 
-  // Stage Rank Ribbon Pill
-  rr(ctx, cx - 90, platY + 70, 180, 36, 18, '#3B0764', '#F472B6', 2);
-  drawVectorCrown(ctx, cx - 60, platY + 88, 16, '#FFF', '#F0ABFC', 1.8);
-  caps(ctx, rank ? `WAR RANK #${rank}` : 'CLAN CHAMPION', cx + 12, platY + 92, 10, '#FFFFFF', 'center', 1.6);
+  // 4. Stage Status Badge
+  rr(ctx, cx - 85, cy + 96, 170, 36, 18, '#3B0764', '#F472B6', 2);
+  drawVectorCrown(ctx, cx - 55, cy + 114, 16, '#FBBF24', '#D97706');
+  caps(ctx, rank ? `RANK #${rank}` : 'TOP ROSTER', cx + 14, cy + 118, 10, '#FFFFFF', 'center', 1.6);
 }
 
-/**
- * Top Left: Player Profile
- */
-function drawPlayerProfileCard(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  title: string, tag: string, rank: number | null, consistency: number | null,
-  avatar: Image | null,
-  assets: ClanAssets,
-): void {
-  drawCartoonCard(ctx, x, y, w, h, 22, C.panelBorderGlow, assets);
+function drawPlayerCardPanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, title: string, tag: string, rank: number | null, consistency: number | null, avatar: Image | null): void {
+  drawCartoonCard(ctx, x, y, w, h);
 
-  // Circular Avatar Thumbnail
-  const avR = 40;
-  const avCx = x + 58;
-  const avCy = y + h / 2 - 8;
-
+  // Circular Mini Avatar Thumbnail
+  const avR = 38, avCx = x + 54, avCy = y + h / 2 - 8;
   ctx.save();
   ctx.beginPath();
   ctx.arc(avCx, avCy, avR + 3, 0, Math.PI * 2);
-  ctx.fillStyle = '#D946EF';
+  ctx.fillStyle = C.panelGlow;
   ctx.fill();
-
   ctx.beginPath();
   ctx.arc(avCx, avCy, avR, 0, Math.PI * 2);
   ctx.fillStyle = '#170627';
   ctx.fill();
   ctx.clip();
-
   if (avatar) {
     const f = Math.max((avR * 2) / avatar.width, (avR * 2) / avatar.height);
-    const dw = avatar.width * f, dh = avatar.height * f;
-    ctx.drawImage(avatar, avCx - dw / 2, avCy - dh / 2, dw, dh);
+    ctx.drawImage(avatar, avCx - (avatar.width * f) / 2, avCy - (avatar.height * f) / 2, avatar.width * f, avatar.height * f);
   } else {
     drawVectorStar(ctx, avCx, avCy, 18, '#FFF', '#A855F7', 2);
   }
   ctx.restore();
 
-  // Rank badge under avatar
-  rr(ctx, avCx - 26, avCy + avR - 10, 52, 22, 11, '#581C87', '#F0ABFC', 2);
-  txt(ctx, rank ? `#${rank}` : '#1', avCx, avCy + avR + 6, 13, '#FFFFFF', true, 'center');
+  rr(ctx, avCx - 24, avCy + avR - 10, 48, 20, 10, '#581C87', '#F0ABFC', 2);
+  txt(ctx, rank ? `#${rank}` : '#1', avCx, avCy + avR + 5, 12, '#FFFFFF', true, 'center');
 
-  // Text info
-  const tx = x + 120;
+  const tx = x + 112;
   const cleanName = title || 'Player';
-  txt(ctx, cleanName, tx, y + 54, fitText(ctx, cleanName, w - 140, 28), '#FFFFFF', true);
+  txt(ctx, cleanName, tx, y + 54, fitText(ctx, cleanName, w - 130, 26), '#FFFFFF', true);
   caps(ctx, `@${cleanName.toLowerCase().replace(/\s+/g, '')} • [${tag || 'R3V0'}]`, tx, y + 78, 11, '#D8B4FE', 'left', 1.4);
 
   // Session Tempo Progress Bar
   const actVal = Math.max(0.1, Math.min(1, consistency ?? 0.85));
-  const barW = w - 145;
-  const barY = y + 112;
-
+  const barW = w - 135, barY = y + 112;
   caps(ctx, 'SESSION TEMPO', tx, barY - 6, 9, C.textDim, 'left', 1.8);
-  caps(ctx, `${Math.round(actVal * 100)}% ACTIVE`, tx + barW, barY - 6, 9, '#F472B6', 'right', 1.2);
-
-  rr(ctx, tx, barY, barW, 11, 5.5, 'rgba(40, 12, 60, 0.9)');
+  caps(ctx, `${Math.round(actVal * 100)}% ACTIVE`, tx + barW, barY - 6, 9, C.accentPink, 'right', 1.2);
+  rr(ctx, tx, barY, barW, 10, 5, 'rgba(40, 12, 60, 0.9)');
   const barGrad = ctx.createLinearGradient(tx, 0, tx + barW, 0);
   barGrad.addColorStop(0, '#A855F7');
   barGrad.addColorStop(1, '#F472B6');
-  rr(ctx, tx, barY, barW * actVal, 11, 5.5, barGrad);
+  rr(ctx, tx, barY, barW * actVal, 10, 5, barGrad);
 }
 
-/**
- * Mid Left: Current Stars
- */
-function drawCurrentStarsCard(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  current: number | null,
-  assets: ClanAssets,
-): void {
-  drawCartoonCard(ctx, x, y, w, h, 22, C.panelBorderGlow, assets);
-
-  drawVectorStar(ctx, x + 34, y + 36, 12, '#FFFFFF', '#D946EF', 2);
+function drawCurrentStarsPanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, current: number | null): void {
+  drawCartoonCard(ctx, x, y, w, h);
+  drawVectorStar(ctx, x + 34, y + 36, 12, '#FFFFFF', C.panelGlow, 2);
   caps(ctx, 'CURRENT STARS', x + 56, y + 42, 14, '#FFFFFF', 'left', 2.0);
 
-  // Prominent star emblem
   drawVectorStar(ctx, x + 66, y + 116, 36, '#F5D0FE', '#9333EA', 4);
-
   const valStr = current === null ? '—' : fmt(current);
   txt(ctx, valStr, x + 128, y + 126, fitText(ctx, valStr, w - 150, 58), '#FFFFFF', true);
   caps(ctx, current === null ? '0 STARS VERIFIED' : `${fmtExact(current)} EXACT STARS`, x + 130, y + 152, 9, '#C4B5FD', 'left', 1.4);
 }
 
-/**
- * Top Right: Clan Position & Rivalry
- */
-function drawClanPositionCard(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  rank: number | null, members: number | null, lead: number | null,
-  assets: ClanAssets,
-): void {
-  drawCartoonCard(ctx, x, y, w, h, 22, C.panelBorderGlow, assets);
-
-  drawVectorCrown(ctx, x + 36, y + 34, 20, '#FFFFFF', '#D946EF', 2);
+function drawClanPositionPanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, rank: number | null, members: number | null, lead: number | null): void {
+  drawCartoonCard(ctx, x, y, w, h);
+  drawVectorCrown(ctx, x + 36, y + 34, 20, '#FFFFFF', C.panelGlow);
   caps(ctx, 'CLAN POSITION', x + 58, y + 42, 14, '#FFFFFF', 'left', 2.0);
 
+  // Rank emblem
   const rCx = x + 76, rCy = y + 114;
-  drawLaurelWreath(ctx, rCx, rCy, 42);
-  txt(ctx, rank ? `#${rank}` : '#1', rCx, rCy + 16, 48, '#FFFFFF', true, 'center');
+  ctx.strokeStyle = '#F0ABFC';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(rCx, rCy, 40, 0, Math.PI * 2);
+  ctx.stroke();
+  txt(ctx, rank ? `#${rank}` : '#1', rCx, rCy + 16, 44, '#FFFFFF', true, 'center');
 
-  const bx = x + 148;
-  rr(ctx, bx, y + 66, w - 168, 40, 12, 'rgba(88, 28, 135, 0.65)', 'rgba(216, 180, 254, 0.45)', 1.5);
-  drawVectorCrown(ctx, bx + 20, y + 86, 16, '#FFF', '#F0ABFC', 1.8);
-  caps(ctx, 'ELITE ROSTER', bx + 38, y + 84, 10, '#FFFFFF', 'left', 1.6);
-  caps(ctx, members ? `ROSTER: ${members} PLAYERS` : 'TOP 1% SQUAD', bx + 38, y + 98, 8, '#D8B4FE', 'left', 1.2);
+  const bx = x + 145;
+  rr(ctx, bx, y + 66, w - 165, 40, 12, 'rgba(88, 28, 135, 0.7)', 'rgba(216, 180, 254, 0.4)', 1.5);
+  caps(ctx, 'ELITE WAR SQUAD', bx + 16, y + 84, 10, '#FFFFFF', 'left', 1.6);
+  caps(ctx, members ? `ROSTER: ${members} PLAYERS` : 'TOP 1% ACTIVE', bx + 16, y + 98, 8, '#D8B4FE', 'left', 1.2);
 
   caps(ctx, 'LEAD TO BEHIND', bx, y + 132, 9, C.textDim, 'left', 1.6);
-  txt(ctx, lead !== null ? `+${fmt(lead)} pts` : '+49.7m pts', bx, y + 156, 21, '#F472B6', true);
+  txt(ctx, lead !== null ? `+${fmt(lead)} pts` : '+49.7m pts', bx, y + 156, 21, C.accentPink, true);
 }
 
-/**
- * Mid Right: Clan Contribution Share
- */
-function drawContributionCard(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  userPoints: number | null, clanTotal: number | null, share: number | null,
-  assets: ClanAssets,
-): void {
-  drawCartoonCard(ctx, x, y, w, h, 22, C.panelBorderGlow, assets);
+function drawContributionPanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, userPoints: number | null, clanTotal: number | null, share: number | null): void {
+  drawCartoonCard(ctx, x, y, w, h);
+  drawVectorStar(ctx, x + 34, y + 36, 11, '#FFFFFF', C.accentCyan, 2);
+  caps(ctx, 'CLAN SHARE', x + 56, y + 42, 14, '#FFFFFF', 'left', 2.0);
 
-  drawVectorStar(ctx, x + 34, y + 36, 11, '#FFFFFF', '#38BDF8', 2);
-  caps(ctx, 'CONTRIBUTION', x + 56, y + 42, 14, '#FFFFFF', 'left', 2.0);
+  // Donut Gauge
+  const pct = Math.max(0, Math.min(100, share ?? 14));
+  const cx = x + 66, cy = y + 116, rad = 34;
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = 'rgba(56, 18, 82, 0.85)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+  ctx.stroke();
 
-  // Circular Donut Progress Chart
-  const badgeCx = x + 66, badgeCy = y + 116;
-  const pct = share ?? 12;
-  drawVectorDonut(ctx, badgeCx, badgeCy, 34, pct);
-  txt(ctx, `${Math.round(pct)}%`, badgeCx, badgeCy + 7, 18, '#FFFFFF', true, 'center');
+  if (pct > 0) {
+    const g = ctx.createLinearGradient(cx - rad, cy, cx + rad, cy);
+    g.addColorStop(0, '#D946EF');
+    g.addColorStop(1, '#38BDF8');
+    ctx.strokeStyle = g;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * pct) / 100);
+    ctx.stroke();
+  }
+  txt(ctx, `${Math.round(pct)}%`, cx, cy + 7, 18, '#FFFFFF', true, 'center');
 
   const tx = x + 124;
   const pts = userPoints ?? clanTotal ?? 0;
@@ -817,14 +866,12 @@ function historySeries(points: HistoryPoint[] | null | undefined, totalMs: numbe
   const arr = (Array.isArray(points) ? points : [])
     .filter(p => p && Number.isFinite(p.ts) && Number.isFinite(p.value) && p.ts <= now)
     .sort((a, b) => a.ts - b.ts);
-
   const start = now - totalMs;
   const step = totalMs / count;
   const values: (number | null)[] = Array.from({ length: count }, () => null);
 
   for (let i = 0; i < count; i++) {
-    const lo = start + i * step;
-    const hi = lo + step;
+    const lo = start + i * step, hi = lo + step;
     let a: HistoryPoint | undefined, b: HistoryPoint | undefined;
     for (const p of arr) {
       if (p.ts <= lo) a = p;
@@ -838,28 +885,16 @@ function historySeries(points: HistoryPoint[] | null | undefined, totalMs: numbe
   return { values, start, end: now, step };
 }
 
-function drawContributionHistoryChart(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  series: Series,
-  assets: ClanAssets,
-): void {
-  drawCartoonCard(ctx, x, y, w, h, 22, C.panelBorderGlow, assets);
-
-  drawVectorCrown(ctx, x + 36, y + 34, 18, '#FFFFFF', '#A855F7', 2);
+function drawContributionHistoryChart(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, series: Series): void {
+  drawCartoonCard(ctx, x, y, w, h);
+  drawVectorCrown(ctx, x + 36, y + 34, 18, '#FFFFFF', '#A855F7');
   caps(ctx, 'CONTRIBUTION TIMELINE', x + 58, y + 40, 15, '#FFFFFF', 'left', 1.8);
 
-  const px = x + 72;
-  const py = y + 74;
-  const pw = w - 105;
-  const ph = h - 130;
-  const bottom = py + ph;
-
+  const px = x + 72, py = y + 74, pw = w - 105, ph = h - 130, bottom = py + ph;
   const validVals = series.values.filter((v): v is number => v !== null && v > 0);
   const max = validVals.length ? Math.max(...validVals) : 0;
   const yMax = max > 0 ? max * 1.15 : 100;
 
-  // Horizontal Grid Lines
   for (let i = 0; i <= 3; i++) {
     const gy = py + (ph * i) / 3;
     ctx.strokeStyle = 'rgba(216, 180, 254, 0.15)';
@@ -871,7 +906,6 @@ function drawContributionHistoryChart(
     txt(ctx, max > 0 ? fmt(yMax * (1 - i / 3)) : (i === 3 ? '0' : ''), px - 12, gy + 4, 11, C.textDim, false, 'right');
   }
 
-  // Render 3D Cartoon Bars
   const count = Math.max(1, series.values.length);
   const slotW = pw / count;
   const barW = Math.max(12, Math.min(26, slotW * 0.62));
@@ -884,20 +918,19 @@ function drawContributionHistoryChart(
 
     const g = ctx.createLinearGradient(0, by, 0, bottom);
     g.addColorStop(0, '#FFFFFF');
-    g.addColorStop(0.2, '#F472B6');
-    g.addColorStop(0.65, '#A855F7');
+    g.addColorStop(0.25, '#F472B6');
+    g.addColorStop(0.7, '#A855F7');
     g.addColorStop(1, '#3B0764');
 
     ctx.save();
     if (value > 0) {
-      ctx.shadowColor = '#D946EF';
+      ctx.shadowColor = C.panelGlow;
       ctx.shadowBlur = 10;
     }
     rr(ctx, bx, by, barW, bh, Math.min(6, barW / 2), g, value > 0 ? '#FFFFFF' : 'rgba(216, 180, 254, 0.2)', 1.2);
     ctx.restore();
   });
 
-  // Record Peak Badge (carefully clamped to never overflow top header)
   if (max > 0) {
     const peakIdx = series.values.indexOf(max);
     const pbx = px + slotW * peakIdx + slotW / 2;
@@ -916,7 +949,6 @@ function drawContributionHistoryChart(
     ctx.fill();
   }
 
-  // X-Axis Time Ticks
   const hours = (series.end - series.start) / 3_600_000;
   const ticks = hours <= 6 ? 6 : 8;
   for (let i = 0; i <= ticks; i++) {
@@ -926,19 +958,13 @@ function drawContributionHistoryChart(
   }
 }
 
-function drawPerformancePanel(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  gain: number | null, average: number | null, best: number | null, pace: number | null,
-  assets: ClanAssets,
-): void {
-  drawCartoonCard(ctx, x, y, w, h, 22, C.panelBorderGlow, assets);
-
-  drawVectorCrown(ctx, x + 34, y + 34, 18, '#FFFFFF', '#38BDF8', 2);
+function drawPerformancePanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, gain: number | null, average: number | null, best: number | null, pace: number | null): void {
+  drawCartoonCard(ctx, x, y, w, h);
+  drawVectorCrown(ctx, x + 34, y + 34, 18, '#FFFFFF', C.accentCyan);
   caps(ctx, 'PERFORMANCE STATS', x + 56, y + 40, 15, '#FFFFFF', 'left', 1.8);
 
   rr(ctx, x + w - 135, y + 24, 110, 26, 13, 'rgba(88, 28, 135, 0.75)', '#D8B4FE', 1);
-  caps(ctx, '24H TELEMETRY', x + w - 80, y + 41, 9, '#F5D0FE', 'center', 1.0);
+  caps(ctx, 'TELEMETRY LIVE', x + w - 80, y + 41, 9, '#F5D0FE', 'center', 1.0);
 
   const rows = [
     { label: 'Total Stars Farmed', val: gain === null ? '—' : fmt(gain), tag: 'ACTIVE' },
@@ -949,19 +975,63 @@ function drawPerformancePanel(
 
   rows.forEach((r, i) => {
     const ry = y + 74 + i * 56;
-
-    // Distinct background container per row
-    rr(ctx, x + 18, ry - 14, w - 36, 48, 12, 'rgba(255, 255, 255, 0.04)', 'rgba(216, 180, 254, 0.12)', 1);
-
+    rr(ctx, x + 18, ry - 14, w - 36, 48, 12, 'rgba(255, 255, 255, 0.04)', 'rgba(216, 180, 254, 0.15)', 1);
     drawVectorStar(ctx, x + 36, ry + 10, 6, '#F5D0FE', '#A855F7', 1.5);
     caps(ctx, r.label, x + 52, ry + 14, 11, C.textMuted, 'left', 1.2);
-
     txt(ctx, r.val, x + w - 105, ry + 16, 19, '#FFFFFF', true, 'right');
-
-    // Dynamic tag pill
     rr(ctx, x + w - 88, ry - 2, 70, 22, 11, 'rgba(88, 28, 135, 0.85)', '#F472B6', 1);
     caps(ctx, r.tag, x + w - 53, ry + 13, 9, '#FFFFFF', 'center', 1.2);
   });
+}
+
+// ============================================================================
+// PROCEDURAL BACKGROUND (NO LOCAL PNG REQUIRED)
+// ============================================================================
+
+function drawProceduralSpaceBackground(ctx: SKRSContext2D, w: number, h: number): void {
+  // Deep space base
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+  bgGrad.addColorStop(0, '#0E0220');
+  bgGrad.addColorStop(0.5, '#070110');
+  bgGrad.addColorStop(1, '#030008');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, w, h);
+
+  // Vibrant cosmic nebulas
+  const n1 = ctx.createRadialGradient(w * 0.2, h * 0.3, 50, w * 0.2, h * 0.3, 500);
+  n1.addColorStop(0, 'rgba(147, 51, 234, 0.22)');
+  n1.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = n1;
+  ctx.fillRect(0, 0, w, h);
+
+  const n2 = ctx.createRadialGradient(w * 0.8, h * 0.4, 50, w * 0.8, h * 0.4, 600);
+  n2.addColorStop(0, 'rgba(217, 70, 239, 0.2)');
+  n2.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = n2;
+  ctx.fillRect(0, 0, w, h);
+
+  // Twinkling stars
+  const starCoords = [
+    [100, 80, 2], [240, 150, 1.5], [420, 70, 3], [750, 110, 2], [920, 60, 2.5],
+    [1200, 90, 1.8], [1450, 130, 3], [1520, 240, 1.5], [80, 450, 2], [1500, 520, 2.2],
+    [120, 780, 2.5], [1480, 820, 2], [800, 950, 1.8], [600, 50, 2], [1350, 40, 2.5]
+  ];
+  starCoords.forEach(([sx, sy, sr]) => {
+    ctx.fillStyle = '#FFFFFF';
+    ctx.shadowColor = '#F472B6';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.shadowBlur = 0;
+
+  // Dark edge vignette
+  const vignette = ctx.createRadialGradient(w / 2, h / 2, 300, w / 2, h / 2, Math.max(w, h) * 0.72);
+  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignette.addColorStop(1, 'rgba(3, 0, 8, 0.85)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, w, h);
 }
 
 // ============================================================================
@@ -971,7 +1041,7 @@ function drawPerformancePanel(
 function eventMeta(subtitle: string, heading?: readonly [string, string]): { tag: string; event: string } {
   const parts = (subtitle ?? '').split(/[•|]/).map(s => s.trim()).filter(Boolean);
   const tag = (parts[0] ?? '').replace(/[\[\]]/g, '').slice(0, 24);
-  const event = heading?.join(' ') ?? (parts.slice(1).join(' · ') || 'PET SIMULATOR 99 WAR');
+  const event = heading?.join(' ') ?? (parts.slice(1).join(' · ') || 'PET SIMULATOR 99 CLAN BATTLE');
   return { tag, event };
 }
 
@@ -996,29 +1066,19 @@ export async function renderHistory(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  const themeDir = assetDir(options.assetDirectory);
-  registerFonts(themeDir);
+  registerOptionalFonts(options.assetDirectory);
 
-  const [avatar, assets] = await Promise.all([
-    playerImage(validId(userId) ?? idFromAvatarUrl(avatarUrl), avatarUrl, options.avatarRenderUrl),
-    loadClanAssets(themeDir),
-  ]);
+  const avatar = await playerImage(validId(userId) ?? idFromAvatarUrl(avatarUrl), avatarUrl, options.avatarRenderUrl);
 
-  // Deep space MMORPG background
-  ctx.fillStyle = C.bgVoid;
-  ctx.fillRect(0, 0, w, h);
-  drawCover(ctx, assets.background, 0, 0, w, h, 0.45);
+  // 1. Procedural Background
+  drawProceduralSpaceBackground(ctx, w, h);
 
-  const vignette = ctx.createRadialGradient(w / 2, h / 2, 220, w / 2, h / 2, Math.max(w, h) * 0.75);
-  vignette.addColorStop(0, 'rgba(26, 7, 46, 0.25)');
-  vignette.addColorStop(1, 'rgba(6, 1, 12, 0.94)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, w, h);
-
-  // Top Header
-  drawContain(ctx, assets.logo, 35, 18, 105, 95, 1.0);
-  txt(ctx, 'R3V0', 155, 66, 52, '#FFFFFF', true);
-  caps(ctx, 'CLAN TELEMETRY & WAR ROOM', 157, 94, 13, '#F472B6', 'left', 2.6);
+  // 2. Header
+  // Procedural Logo Badge
+  rr(ctx, 40, 22, 90, 80, 18, '#3B0764', '#D946EF', 2.5);
+  drawVectorCrown(ctx, 85, 58, 38, '#FBBF24', '#B45309');
+  txt(ctx, 'R3V0', 145, 64, 48, '#FFFFFF', true);
+  caps(ctx, 'CLAN TELEMETRY & WAR ROOM', 147, 90, 12, C.accentPink, 'left', 2.5);
 
   const meta = eventMeta(subtitle, options.heading);
   rr(ctx, w - 280, 36, 115, 34, 17, 'rgba(88, 28, 135, 0.85)', '#D946EF', 1.5);
@@ -1030,7 +1090,7 @@ export async function renderHistory(
   caps(ctx, meta.event, w - 40, 94, 11, '#E9D5FF', 'right', 1.6);
   caps(ctx, meta.tag ? `CLAN [${meta.tag}]` : '[R3V0 CLAN]', w - 40, 112, 9, C.textDim, 'right', 1.4);
 
-  // Compute Timeframe Data Series
+  // 3. Stats calculation
   const tf = getTimeframeConfig(selectedTimeframe);
   const now = options.now ?? Date.now();
   const series = historySeries(stats?.points, tf.totalMs, tf.buckets, now);
@@ -1051,25 +1111,22 @@ export async function renderHistory(
   const share = clanTotal && clanTotal > 0 && userPoints !== null ? Math.min(100, Math.max(0, (userPoints / clanTotal) * 100)) : null;
   const lead = rivalry?.behind && num(rivalry.behind.lead) !== null ? num(rivalry.behind.lead) : null;
 
-  // Mid Section (Symmetrical & strictly separated bounds)
-  // Left Column (w: 430)
-  drawPlayerProfileCard(ctx, 35, 125, 430, 210, title, meta.tag, rank, consistency, avatar, assets);
-  drawCurrentStarsCard(ctx, 35, 355, 430, 210, current, assets);
+  // 4. Middle Stage & Side Cards (Symmetrical Grid: 420px | 640px | 420px)
+  drawPlayerCardPanel(ctx, 40, 125, 420, 205, title, meta.tag, rank, consistency, avatar);
+  drawCurrentStarsPanel(ctx, 40, 350, 420, 205, current);
 
-  // Center Character Stage (w: 630, x: 485)
-  drawCentralCharacterStage(ctx, 485, 125, 630, 440, avatar, assets, rank);
+  drawStage(ctx, 480, 125, 640, 430, avatar, rank);
 
-  // Right Column (w: 430, x: 1135)
-  drawClanPositionCard(ctx, 1135, 125, 430, 210, rank, members, lead, assets);
-  drawContributionCard(ctx, 1135, 355, 430, 210, userPoints, clanTotal, share, assets);
+  drawClanPositionPanel(ctx, 1140, 125, 420, 205, rank, members, lead);
+  drawContributionPanel(ctx, 1140, 350, 420, 205, userPoints, clanTotal, share);
 
-  // Bottom Section (y: 585, h: 365)
-  drawContributionHistoryChart(ctx, 35, 585, 1040, 365, series, assets);
-  drawPerformancePanel(ctx, 1095, 585, 470, 365, gain, average, best, pace, assets);
+  // 5. Bottom Section
+  drawContributionHistoryChart(ctx, 40, 575, 1040, 370, series);
+  drawPerformancePanel(ctx, 1100, 575, 460, 370, gain, average, best, pace);
 
-  // Footer
-  caps(ctx, 'R3V0 INTELLIGENCE • OFFICIAL CLAN TELEMETRY', 40, 982, 9, C.textDim, 'left', 1.8);
-  caps(ctx, 'PET SIMULATOR 99 • VERIFIED SECURE PIPELINE', w - 40, 982, 9, C.textDim, 'right', 1.8);
+  // 6. Footer
+  caps(ctx, 'R3V0 INTELLIGENCE • PURE VECTOR GRAPHICS ENGINE', 45, 980, 9, C.textDim, 'left', 1.8);
+  caps(ctx, 'PET SIMULATOR 99 • ULTRA-HD 4K RENDER', w - 45, 980, 9, C.textDim, 'right', 1.8);
 
   return canvas.encode('png');
 }
@@ -1088,43 +1145,42 @@ export async function renderPlayerCard(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  const themeDir = assetDir(options.assetDirectory);
-  registerFonts(themeDir);
-
-  const [avatar, assets] = await Promise.all([
-    playerImage(validId(userId) ?? idFromAvatarUrl(avatarUrl), avatarUrl, options.avatarRenderUrl),
-    loadClanAssets(themeDir),
-  ]);
-
+  registerOptionalFonts(options.assetDirectory);
+  const avatar = await playerImage(validId(userId) ?? idFromAvatarUrl(avatarUrl), avatarUrl, options.avatarRenderUrl);
   const meta = eventMeta(subtitle, options.heading);
 
-  ctx.fillStyle = C.bgVoid;
-  ctx.fillRect(0, 0, w, h);
-  drawCover(ctx, assets.background, 0, 0, w, h, 0.45);
+  drawProceduralSpaceBackground(ctx, w, h);
 
-  drawContain(ctx, assets.logo, (w - 180) / 2, 24, 180, 90, 1.0);
-  drawCartoonCard(ctx, 35, 130, 570, 680, 26, C.panelBorderGlow, assets);
+  // Logo
+  rr(ctx, w / 2 - 40, 24, 80, 70, 16, '#3B0764', '#D946EF', 2);
+  drawVectorCrown(ctx, w / 2, 54, 34, '#FBBF24', '#B45309');
 
-  const platW = 380, platH = 110;
-  drawContain(ctx, assets.platform, (w - platW) / 2, 380, platW, platH, 1.0);
+  // Main Card
+  drawCartoonCard(ctx, 35, 115, 570, 700, 24);
 
-  drawContain(ctx, assets.crystalCat ?? assets.cat, 50, 330, 110, 110, 1.0);
-  drawContain(ctx, assets.bat, w - 160, 330, 110, 110, 1.0);
-  drawContain(ctx, assets.angel, w - 140, 180, 90, 90, 1.0);
-
-  drawContain(ctx, assets.crystals, 50, 420, 85, 85, 0.85);
-  drawContainFlipped(ctx, assets.crystals, w - 135, 420, 85, 85, true, 0.85);
+  // Pedestal & Avatar
+  drawFloatingPedestal(ctx, w / 2, 380, 380, 110);
+  drawPetCat(ctx, 95, 340, 100);
+  drawPetBat(ctx, w - 95, 340, 100);
+  drawPetAngel(ctx, w - 100, 190, 85);
 
   if (avatar) {
-    drawContain(ctx, avatar, (w - 220) / 2, 210, 220, 220, 1.0);
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 10;
+    const avS = 220;
+    const dw = Math.min(avS, avS * (avatar.width / avatar.height));
+    ctx.drawImage(avatar, w / 2 - dw / 2, 205, dw, avS);
+    ctx.restore();
   }
 
   const pName = title || 'Player';
-  txt(ctx, pName, w / 2, 535, fitText(ctx, pName, 480, 40), '#FFFFFF', true, 'center');
-  caps(ctx, meta.tag ? `[${meta.tag}] CLAN ROSTER` : '[R3V0] SQUAD', w / 2, 565, 12, '#D8B4FE', 'center', 1.6);
+  txt(ctx, pName, w / 2, 530, fitText(ctx, pName, 480, 38), '#FFFFFF', true, 'center');
+  caps(ctx, meta.tag ? `[${meta.tag}] CLAN ROSTER` : '[R3V0] SQUAD', w / 2, 560, 12, '#D8B4FE', 'center', 1.6);
 
-  rr(ctx, w / 2 - 90, 595, 180, 40, 20, '#581C87', '#D946EF', 2);
-  caps(ctx, options.rank ? `RANK #${options.rank}` : 'WARRIOR', w / 2, 620, 11, '#FFFFFF', 'center', 1.6);
+  rr(ctx, w / 2 - 90, 590, 180, 40, 20, '#581C87', '#D946EF', 2);
+  caps(ctx, options.rank ? `WAR RANK #${options.rank}` : 'MEMBER', w / 2, 615, 11, '#FFFFFF', 'center', 1.6);
 
   if (options.roleLabel) {
     rr(ctx, 65, 655, 510, 55, 16, 'rgba(15, 6, 26, 0.9)', '#A855F7', 1.5);
@@ -1132,8 +1188,7 @@ export async function renderPlayerCard(
     txt(ctx, options.roleLabel, w / 2, 698, 19, '#5EEAD4', true, 'center');
   }
 
-  caps(ctx, 'R3V0 CLAN INTELLIGENCE', w / 2, 834, 10, C.textDim, 'center', 2.0);
-
+  caps(ctx, 'R3V0 CLAN INTELLIGENCE', w / 2, 840, 10, C.textDim, 'center', 2.0);
   return canvas.encode('png');
 }
 
@@ -1145,44 +1200,41 @@ export async function renderRap(r: RapResult): Promise<Buffer> {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  const themeDir = assetDir();
-  registerFonts(themeDir);
-  const assets = await loadClanAssets(themeDir);
+  registerOptionalFonts();
+  drawProceduralSpaceBackground(ctx, w, h);
 
-  ctx.fillStyle = C.bgVoid;
-  ctx.fillRect(0, 0, w, h);
-  drawCover(ctx, assets.background, 0, 0, w, h, 0.45);
-
-  drawContain(ctx, assets.logo, 40, 20, 110, 85, 1.0);
-  txt(ctx, 'RAP TRACKER', 165, 62, 38, '#FFFFFF', true);
-  caps(ctx, 'PET VALUATION & MARKET INTELLIGENCE', 167, 88, 10, C.textMuted, 'left', 2.2);
+  // Header
+  rr(ctx, 40, 20, 90, 75, 16, '#3B0764', '#D946EF', 2);
+  drawVectorCrown(ctx, 85, 54, 34, '#FBBF24', '#B45309');
+  txt(ctx, 'RAP TRACKER', 150, 60, 36, '#FFFFFF', true);
+  caps(ctx, 'PET VALUATION & MARKET INTELLIGENCE', 152, 84, 10, C.textMuted, 'left', 2.0);
 
   // Left Item Preview Card
-  drawCartoonCard(ctx, 40, 125, 350, 515, 24, C.panelBorderGlow, assets);
-
+  drawCartoonCard(ctx, 40, 115, 350, 525, 24);
   const img = await loadRemote(r.imageUrl);
   if (img) {
-    drawContain(ctx, img, 65, 165, 300, 260, 1.0);
+    const f = Math.min(260 / img.width, 240 / img.height);
+    const dw = img.width * f, dh = img.height * f;
+    ctx.drawImage(img, 40 + (350 - dw) / 2, 160 + (240 - dh) / 2, dw, dh);
   } else {
-    drawContain(ctx, assets.crystalCat, 90, 165, 250, 250, 1.0);
+    drawPetCat(ctx, 215, 280, 160);
   }
 
-  txt(ctx, r.name, 215, 470, fitText(ctx, r.name, 300, 30), '#FFFFFF', true, 'center');
+  txt(ctx, r.name, 215, 470, fitText(ctx, r.name, 310, 28), '#FFFFFF', true, 'center');
   caps(ctx, 'TARGET ITEM', 215, 498, 9, C.textDim, 'center', 1.8);
 
   // Right Variants Card
-  drawCartoonCard(ctx, 410, 125, 750, 515, 24, C.panelBorderGlow, assets);
-  txt(ctx, 'MARKET VARIANTS', 445, 172, 24, '#FFFFFF', true);
+  drawCartoonCard(ctx, 410, 115, 750, 525, 24);
+  txt(ctx, 'MARKET VARIANTS', 445, 162, 24, '#FFFFFF', true);
 
-  caps(ctx, 'VARIANT TYPE', 450, 208, 9, C.textDim, 'left', 1.8);
-  caps(ctx, 'DIAMONDS (RAP)', 870, 208, 9, C.textDim, 'right', 1.8);
-  caps(ctx, '24H DELTA', 1115, 208, 9, C.textDim, 'right', 1.8);
+  caps(ctx, 'VARIANT TYPE', 450, 198, 9, C.textDim, 'left', 1.8);
+  caps(ctx, 'DIAMONDS (RAP)', 870, 198, 9, C.textDim, 'right', 1.8);
+  caps(ctx, '24H DELTA', 1115, 198, 9, C.textDim, 'right', 1.8);
 
   const vars = Array.isArray(r.variants) ? r.variants.slice(0, 5) : [];
   vars.forEach((v, i) => {
-    const yy = 224 + i * 72;
-    rr(ctx, 440, yy, 690, 58, 16, 'rgba(15, 6, 26, 0.88)', 'rgba(216, 180, 254, 0.25)', 1.2);
-
+    const yy = 214 + i * 72;
+    rr(ctx, 440, yy, 690, 58, 16, 'rgba(15, 6, 26, 0.9)', 'rgba(216, 180, 254, 0.25)', 1.2);
     txt(ctx, v.label, 460, yy + 36, 21, '#FFFFFF', true);
     txt(ctx, num(v.value) === null ? '—' : fmt(v.value), 870, yy + 36, 23, '#FFF', true, 'right');
 
@@ -1190,10 +1242,9 @@ export async function renderRap(r: RapResult): Promise<Buffer> {
     const p = typeof v.deltaPct === 'number' && Number.isFinite(v.deltaPct) ? v.deltaPct : null;
     const isUp = (d ?? 0) >= 0;
     const str = d === null ? '—' : `${isUp ? '+' : ''}${fmt(d)}${p === null ? '' : ` (${isUp ? '+' : ''}${p.toFixed(1)}%)`}`;
-    txt(ctx, str, 1110, yy + 36, 18, d === null ? C.textDim : isUp ? C.accentGreen : C.accentNeon, true, 'right');
+    txt(ctx, str, 1110, yy + 36, 18, d === null ? C.textDim : isUp ? C.accentGreen : C.accentPink, true, 'right');
   });
 
-  caps(ctx, `BASELINE: ${r.baselineLabel ?? 'NORMAL'}`, 445, 608, 9, C.textDim, 'left', 1.8);
-
+  caps(ctx, `BASELINE: ${r.baselineLabel ?? 'NORMAL'}`, 445, 605, 9, C.textDim, 'left', 1.8);
   return canvas.encode('png');
 }

@@ -1,758 +1,895 @@
-import { createCanvas, loadImage, GlobalFonts, type SKRSContext2D, type Image } from '@napi-rs/canvas';
-import { resolve } from 'node:path';
+import {
+  ActionRowBuilder,
+  AttachmentBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
+  EmbedBuilder,
+  PermissionFlagsBits,
+  type ChatInputCommandInteraction,
+  type InteractionEditReplyOptions,
+  type ButtonInteraction
+} from 'discord.js';
 import { existsSync } from 'node:fs';
-import { Buffer } from 'node:buffer';
-import type { HistoryStats } from '../services/HistoryService.js';
-import type { RapResult } from '../services/RapService.js';
-import type { HistoryPoint } from '../types.js';
+import { resolve } from 'node:path';
+import type { AppContext } from './context.js';
+import { config } from '../config.js';
+import {
+  clanRepo,
+  playerRepo,
+  settingsRepo,
+  whitelistRepo
+} from '../database/repositories.js';
+import {
+  renderHistory,
+  renderPlayerCard,
+  renderRap,
+  type TimeframeMode,
+  type ClanRivalryInfo,
+  getTimeframeConfig,
+  extractBucketsForTimeframe,
+  fmt
+} from '../canvas/renderers.js';
+import { render24hChart } from '../canvas/chart.js';
+import { compact } from '../canvas/primitives.js';
+import { masteryService } from '../services/MasteryService.js';
+import type { ClanMember, ClanRecord } from '../types.js';
 
-// ============================================================================
-// R3V0 ANALYTICS DASHBOARD ENGINE — 1:1 RECREATION
-// Dark Slate, Cyan/Magenta Glows, Spline Charts & Rivals Bar
-// ============================================================================
+const defaultClan = (): string => settingsRepo.get('main_clan') ?? config.MAIN_CLAN;
 
-export type TimeframeMode = '30m' | '1h' | '3h' | '6h' | '12h' | '24h';
-
-export interface ClanRivalryInfo {
-  rank: number;
-  totalMembers: number;
-  userPoints: number;
-  clanPoints: number;
-  ahead?: { name: string; gap: number } | null;
-  behind?: { name: string; lead: number } | null;
-}
-
-export interface ClanLeaderboardEntry { rank: number; name: string; points: number }
-
-export interface HistoryRenderOptions {
-  leaderboard?: readonly ClanLeaderboardEntry[];
-  assetDirectory?: string;
-  avatarRenderUrl?: string | null;
-  now?: number;
-  scale?: 1 | 2;
-  heading?: readonly [string, string];
-}
-
-export interface PlayerCardRenderOptions extends HistoryRenderOptions {
-  rank?: number | null;
-  roleLabel?: string;
-}
-
-// ============================================================================
-// COLOR PALETTE & STYLES (MATCHING SCREENSHOTS)
-// ============================================================================
-
-const C = {
-  bgApp: '#090C12',
-  bgCard: '#0F131C',
-  bgSubCard: '#151A26',
-  borderCard: '#1E2536',
-  borderLight: 'rgba(255, 255, 255, 0.08)',
-  
-  // Text Colors
-  textLight: '#FFFFFF',
-  textSecondary: '#94A3B8',
-  textMuted: '#64748B',
-  
-  // Accents matching the 4 stat cards
-  accentCyan: '#22D3EE',    // Latest hour / Curve
-  accentMint: '#4ADE80',    // Total points / Event stars
-  accentBlue: '#60A5FA',    // Average / hour
-  accentPurple: '#C084FC',  // Best hour
-  accentTag: '#34D399',     // Clan tag [MCWV]
-};
-
-const FONT_SANS = 'Inter, Segoe UI, Roboto, sans-serif';
-let fontsLoaded = false;
-
-function registerOptionalFonts(directory?: string): void {
-  if (fontsLoaded) return;
-  const p = directory ? resolve(directory, 'fonts') : resolve(process.cwd(), 'assets/fonts');
-  if (existsSync(p)) {
-    try {
-      const displayPath = resolve(p, 'BarlowCondensed-SemiBold.ttf');
-      const bodyPath = resolve(p, 'Barlow-SemiBold.ttf');
-      if (existsSync(displayPath)) GlobalFonts.registerFromPath(displayPath, 'BarlowDisplay');
-      if (existsSync(bodyPath)) GlobalFonts.registerFromPath(bodyPath, 'BarlowBody');
-    } catch { /* fallback */ }
+function getLogoAttachment(): AttachmentBuilder | null {
+  const logoPath = resolve(process.cwd(), 'assets/branding/r3v0-logo.png');
+  if (existsSync(logoPath)) {
+    return new AttachmentBuilder(logoPath, { name: 'r3v0-logo.png' });
   }
-  fontsLoaded = true;
+  return null;
 }
 
-export function safeNum(val: number | null | undefined, fallback = 0): number {
-  return typeof val === 'number' && Number.isFinite(val) ? val : fallback;
-}
-
-export function fmt(n: number | null | undefined): string {
-  const val = safeNum(n, 0);
-  const abs = Math.abs(val);
-  if (abs >= 1e12) return `${(val / 1e12).toFixed(2)}t`;
-  if (abs >= 1e9) return `${(val / 1e9).toFixed(2)}b`;
-  if (abs >= 1e6) return `${(val / 1e6).toFixed(2)}m`;
-  if (abs >= 1e3) return `${(val / 1e3).toFixed(2)}k`;
-  return val.toLocaleString('en-US');
-}
-
-export function fmtExact(n: number | null | undefined): string {
-  return safeNum(n, 0).toLocaleString('en-US');
-}
-
-export function getTimeframeConfig(mode: TimeframeMode): { totalMs: number; buckets: number; labels: string[] } {
-  switch (mode) {
-    case '30m': return { totalMs: 30 * 60_000, buckets: 14, labels: ['25m', '20m', '15m', '10m', '5m', 'NOW'] };
-    case '1h':  return { totalMs: 60 * 60_000, buckets: 16, labels: ['50m', '40m', '30m', '20m', '10m', 'NOW'] };
-    case '3h':  return { totalMs: 3 * 3_600_000, buckets: 18, labels: ['3h', '2.5h', '2h', '1.5h', '1h', 'NOW'] };
-    case '6h':  return { totalMs: 6 * 3_600_000, buckets: 20, labels: ['5h', '4h', '3h', '2h', '1h', 'NOW'] };
-    case '12h': return { totalMs: 12 * 3_600_000, buckets: 24, labels: ['12h', '9h', '6h', '3h', '1h', 'NOW'] };
-    case '24h':
-    default:    return { totalMs: 24 * 3_600_000, buckets: 24, labels: ['23h ago', '17h ago', '11h ago', '6h ago', 'NOW'] };
-  }
-}
-
-export function extractBucketsForTimeframe(
-  points: HistoryPoint[],
-  totalMs: number,
-  bucketCount: number,
-  currentVal?: number,
-): number[] {
-  const buckets = new Array<number>(bucketCount).fill(0);
-  void currentVal;
-  if (!Array.isArray(points) || points.length < 2) return buckets;
-  const now = Date.now();
-  const step = totalMs / bucketCount;
-  const sorted = [...points]
-    .filter((p): p is HistoryPoint => typeof p?.ts === 'number' && Number.isFinite(p.ts) && typeof p?.value === 'number' && Number.isFinite(p.value))
-    .sort((a, b) => a.ts - b.ts);
-
-  for (let i = 0; i < bucketCount; i++) {
-    const start = now - (bucketCount - i) * step;
-    const end = start + step;
-    const a = sorted.filter(p => p.ts <= start).slice(-1)[0] ?? sorted[0];
-    const b = sorted.filter(p => p.ts <= end).slice(-1)[0] ?? a;
-    if (a && b) buckets[i] = Math.max(0, b.value - a.value);
-  }
-  return buckets;
-}
-
-// ============================================================================
-// DRAWING PRIMITIVES & ICONS
-// ============================================================================
-
-function roundRect(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + w - radius, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
-  ctx.lineTo(x + w, y + h - radius);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
-  ctx.lineTo(x + radius, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
-  ctx.lineTo(x, y + radius);
-  ctx.quadraticCurveTo(x, y, x + radius, y);
-  ctx.closePath();
-}
-
-function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number, fill?: string | CanvasGradient | null, stroke?: string | CanvasGradient | null, lw = 1): void {
-  ctx.save();
-  roundRect(ctx, x, y, w, h, r);
-  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
-  ctx.restore();
-}
-
-function txt(ctx: SKRSContext2D, text: string, x: number, y: number, size: number, color = C.textLight, bold = false, align: 'left' | 'center' | 'right' = 'left', maxW?: number): void {
-  ctx.save();
-  ctx.font = `${bold ? 700 : 500} ${size}px ${FONT_SANS}`;
-  ctx.fillStyle = color;
-  ctx.textAlign = align;
-  ctx.textBaseline = 'alphabetic';
-  if (maxW) ctx.fillText(text, x, y, maxW);
-  else ctx.fillText(text, x, y);
-  ctx.restore();
-}
-
-// Minimal vector icons rendered in top-right of cards
-function drawIcon(ctx: SKRSContext2D, type: 'star' | 'trophy' | 'bars' | 'bolt', cx: number, cy: number, color: string): void {
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = 1.7;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-
-  if (type === 'star') {
-    ctx.beginPath();
-    for (let i = 0; i < 5; i++) {
-      const a = (-90 + i * 72) * Math.PI / 180;
-      const b = (-54 + i * 72) * Math.PI / 180;
-      ctx.lineTo(cx + Math.cos(a) * 7.5, cy + Math.sin(a) * 7.5);
-      ctx.lineTo(cx + Math.cos(b) * 3.4, cy + Math.sin(b) * 3.4);
-    }
-    ctx.closePath();
-    ctx.stroke();
-  } else if (type === 'trophy') {
-    ctx.beginPath();
-    ctx.moveTo(cx - 5.5, cy - 6);
-    ctx.lineTo(cx + 5.5, cy - 6);
-    ctx.lineTo(cx + 3.8, cy + 0.5);
-    ctx.quadraticCurveTo(cx, cy + 4, cx - 3.8, cy + 0.5);
-    ctx.closePath();
-    ctx.stroke();
-    ctx.strokeRect(cx - 1, cy + 3.5, 2, 2.5);
-    ctx.strokeRect(cx - 4, cy + 6, 8, 1.5);
-  } else if (type === 'bars') {
-    ctx.fillRect(cx - 5, cy + 1, 2.2, 5);
-    ctx.fillRect(cx - 1.1, cy - 3, 2.2, 9);
-    ctx.fillRect(cx + 2.8, cy - 6, 2.2, 12);
-  } else if (type === 'bolt') {
-    ctx.beginPath();
-    ctx.moveTo(cx + 1, cy - 7);
-    ctx.lineTo(cx - 4, cy - 0.5);
-    ctx.lineTo(cx - 0.5, cy - 0.5);
-    ctx.lineTo(cx - 1.5, cy + 7);
-    ctx.lineTo(cx + 4, cy + 0.5);
-    ctx.lineTo(cx + 0.5, cy + 0.5);
-    ctx.closePath();
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-// Background Grid
-function drawAppBackground(ctx: SKRSContext2D, w: number, h: number): void {
-  ctx.fillStyle = C.bgApp;
-  ctx.fillRect(0, 0, w, h);
-
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
-  ctx.lineWidth = 1;
-  const step = 32;
-  ctx.beginPath();
-  for (let x = 0; x <= w; x += step) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-  }
-  for (let y = 0; y <= h; y += step) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
-  }
-  ctx.stroke();
-}
-
-// ============================================================================
-// AVATAR FETCHING
-// ============================================================================
-
-interface CacheItem<T> { value: T; expires: number }
-const imageCache = new Map<string, CacheItem<Image>>();
-const pendingImages = new Map<string, Promise<Image | null>>();
-
-async function fetchImage(url: string): Promise<Image | null> {
+async function editSafe(
+  interaction: ChatInputCommandInteraction,
+  payload: InteractionEditReplyOptions | string
+) {
   try {
-    const u = new URL(url);
-    if (!['https:', 'http:'].includes(u.protocol)) return null;
-    const res = await fetch(u, { signal: AbortSignal.timeout(8_000) });
-    if (!res.ok) return null;
-    const arrayBuffer = await res.arrayBuffer();
-    const img = await loadImage(Buffer.from(arrayBuffer));
-    return img.width > 0 && img.height > 0 ? img : null;
-  } catch { return null; }
-}
-
-async function loadRemote(url: string | null | undefined): Promise<Image | null> {
-  if (!url) return null;
-  const hit = imageCache.get(url);
-  if (hit && hit.expires > Date.now()) return hit.value;
-  if (pendingImages.has(url)) return pendingImages.get(url)!;
-
-  const p = fetchImage(url).then(img => {
-    if (img) imageCache.set(url, { value: img, expires: Date.now() + 300_000 });
-    return img;
-  }).finally(() => pendingImages.delete(url));
-  pendingImages.set(url, p);
-  return p;
-}
-
-function drawCircularAvatar(ctx: SKRSContext2D, img: Image | null, cx: number, cy: number, r: number, borderColor = '#38BDF8'): void {
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = '#171D29';
-  ctx.fill();
-  ctx.clip();
-
-  if (img) {
-    const scale = Math.max((r * 2) / img.width, (r * 2) / img.height);
-    const dw = img.width * scale;
-    const dh = img.height * scale;
-    ctx.drawImage(img, cx - dw / 2, cy - dh / 2, dw, dh);
-  } else {
-    ctx.fillStyle = '#334155';
-    ctx.fill();
+    return await interaction.editReply(payload);
+  } catch (err) {
+    console.error('[DISCORD_EDIT_ERROR]', err);
+    return await interaction.followUp({
+      content: 'Komenda została wykonana, ale Discord odrzucił edycję odpowiedzi.'
+    }).catch(() => null);
   }
-  ctx.restore();
-
-  ctx.save();
-  ctx.strokeStyle = borderColor;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
 }
 
-// ============================================================================
-// STAT CARD COMPONENT
-// ============================================================================
+function historyEmbed(
+  title: string,
+  current: number,
+  delta24h: number,
+  deltaPct24h: number,
+  hasLogo = false
+): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setColor(0x7B2CBF)
+    .setTitle(`📈 ${title}`)
+    .setDescription('> Historia jest generowana wyłącznie z lokalnych snapshotów bazy **SQLite**.')
+    .addFields(
+      { name: '🎯 Aktualne punkty', value: `\`${compact(current)}\``, inline: true },
+      { name: '⏳ Zmiana 24h', value: `\`${delta24h >= 0 ? '+' : ''}${compact(delta24h)}\``, inline: true },
+      { name: '📊 Zmiana %', value: `\`${deltaPct24h >= 0 ? '+' : ''}${deltaPct24h.toFixed(1)}%\``, inline: true }
+    )
+    .setImage('attachment://history.png')
+    .setFooter({ text: 'R3V0 Tracker • SQLite Time Series' })
+    .setTimestamp();
 
-function drawStatCard(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  label: string,
-  value: string,
-  valueColor: string,
-  iconType: 'star' | 'trophy' | 'bars' | 'bolt'
-): void {
-  // Card base
-  rr(ctx, x, y, w, h, 14, C.bgSubCard, C.borderCard, 1);
-
-  // Top right icon button
-  const ibSize = 28;
-  const ibX = x + w - ibSize - 16;
-  const ibY = y + 16;
-  rr(ctx, ibX, ibY, ibSize, ibSize, 8, 'rgba(255, 255, 255, 0.03)', 'rgba(255, 255, 255, 0.08)', 1);
-  drawIcon(ctx, iconType, ibX + ibSize / 2, ibY + ibSize / 2, valueColor);
-
-  // Label
-  txt(ctx, label, x + 20, y + 34, 13, C.textSecondary, false, 'left');
-
-  // Value
-  txt(ctx, value, x + 20, y + 74, 30, valueColor, true, 'left');
-}
-
-// ============================================================================
-// GLOBAL RANK CARD (TOP RIGHT)
-// ============================================================================
-
-function drawGlobalRankCard(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  rank: number,
-  totalPlayers: string,
-  percentileBehind: number,
-  aheadUser?: { name: string; avatarUrl?: string | null } | null,
-  behindUser?: { name: string; avatarUrl?: string | null } | null,
-  aheadImg?: Image | null,
-  behindImg?: Image | null,
-): void {
-  rr(ctx, x, y, w, h, 16, C.bgSubCard, C.borderCard, 1);
-
-  // 1. Behind Player (Left)
-  const leftX = x + 30;
-  const midY = y + 48;
-  txt(ctx, `#${rank + 1} · Behind`, leftX + 42, midY - 14, 10, C.textMuted, false, 'left');
-  drawCircularAvatar(ctx, behindImg ?? null, leftX + 18, midY, 16, '#EF4444');
-  txt(ctx, (behindUser?.name ?? 'repollito789').slice(0, 15), leftX, y + 80, 11, C.textLight, true, 'left');
-
-  // 2. Global Rank (Center)
-  const cx = x + w / 2;
-  txt(ctx, 'GLOBAL RANK', cx, y + 30, 11, C.textMuted, true, 'center');
-  txt(ctx, `#${rank}`, cx, y + 62, 34, C.textLight, true, 'center');
-  txt(ctx, `of ${totalPlayers} players`, cx, y + 80, 11, C.textMuted, false, 'center');
-
-  // 3. Ahead Player (Right)
-  const rightX = x + w - 30;
-  txt(ctx, `#${Math.max(1, rank - 1)} · Ahead`, rightX - 42, midY - 14, 10, C.textMuted, false, 'right');
-  drawCircularAvatar(ctx, aheadImg ?? null, rightX - 18, midY, 16, '#22C55E');
-  txt(ctx, (aheadUser?.name ?? 'Pandy_DandyLandy').slice(0, 15), rightX, y + 80, 11, C.textLight, true, 'right');
-
-  // 4. Horizontal Track / Slider
-  const barX = x + 24;
-  const barY = y + 96;
-  const barW = w - 48;
-  const barH = 4;
-
-  rr(ctx, barX, barY, barW, barH, 2, '#1E293B');
-
-  // Gradient progress fill
-  const pct = Math.max(0.02, Math.min(0.98, percentileBehind / 100));
-  const fillGrad = ctx.createLinearGradient(barX, 0, barX + barW * pct, 0);
-  fillGrad.addColorStop(0, '#38BDF8');
-  fillGrad.addColorStop(1, '#A855F7');
-  rr(ctx, barX, barY, barW * pct, barH, 2, fillGrad);
-
-  // Glowing marker dot
-  const dotX = barX + barW * pct;
-  ctx.save();
-  ctx.shadowColor = '#38BDF8';
-  ctx.shadowBlur = 8;
-  ctx.fillStyle = '#FFFFFF';
-  ctx.beginPath();
-  ctx.arc(dotX, barY + barH / 2, 4.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-
-  // 5. Percentile Labels below slider
-  const leftPct = `${percentileBehind.toFixed(2)}%`;
-  const rightPct = `${(100 - percentileBehind).toFixed(2)}%`;
-
-  txt(ctx, leftPct, barX + 60, y + 124, 17, '#38BDF8', true, 'center');
-  txt(ctx, 'players behind', barX + 60, y + 138, 10, C.textMuted, false, 'center');
-
-  txt(ctx, rightPct, barX + barW - 60, y + 124, 17, C.textLight, true, 'center');
-  txt(ctx, 'players ahead', barX + barW - 60, y + 138, 10, C.textMuted, false, 'center');
-}
-
-// ============================================================================
-// HOURLY PERFORMANCE SPLINE CHART (1:1 PARITY)
-// ============================================================================
-
-function drawSplineChart(
-  ctx: SKRSContext2D,
-  x: number, y: number, w: number, h: number,
-  values: number[],
-  labels: string[],
-  averageValue: number,
-  latestValue: number
-): void {
-  // Chart Container
-  rr(ctx, x, y, w, h, 16, C.bgSubCard, C.borderCard, 1);
-
-  // Header Title
-  txt(ctx, 'Hourly performance', x + 24, y + 36, 17, C.textLight, true, 'left');
-  txt(ctx, 'Points earned per hour · Last 24 hours', x + 24, y + 54, 12, C.textMuted, false, 'left');
-
-  // Legend at top right
-  const legRight = x + w - 28;
-  txt(ctx, 'Average', legRight, y + 38, 12, C.textSecondary, false, 'right');
-  ctx.save();
-  ctx.strokeStyle = '#60A5FA';
-  ctx.lineWidth = 1.8;
-  ctx.setLineDash([4, 4]);
-  ctx.beginPath();
-  ctx.moveTo(legRight - 65, y + 34);
-  ctx.lineTo(legRight - 50, y + 34);
-  ctx.stroke();
-  ctx.restore();
-
-  txt(ctx, 'Hourly points', legRight - 85, y + 38, 12, C.textSecondary, false, 'right');
-  ctx.fillStyle = C.accentCyan;
-  ctx.beginPath();
-  ctx.arc(legRight - 160, y + 34, 4, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Plot bounds
-  const px = x + 75;
-  const py = y + 85;
-  const pw = w - 105;
-  const ph = h - 135;
-  const bottom = py + ph;
-
-  const maxVal = Math.max(...values, averageValue, 10);
-  const yCeil = maxVal * 1.25;
-
-  // Y-Axis Horizontal Grid lines & Labels
-  const yTicks = 5;
-  for (let i = 0; i <= yTicks; i++) {
-    const gy = py + (ph * i) / yTicks;
-    const val = yCeil * (1 - i / yTicks);
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(px, gy);
-    ctx.lineTo(px + pw, gy);
-    ctx.stroke();
-
-    txt(ctx, i === yTicks ? '0' : fmt(val), px - 12, gy + 4, 11, C.textMuted, false, 'right');
+  if (hasLogo) {
+    embed.setThumbnail('attachment://r3v0-logo.png');
   }
 
-  // Dashed Average Line across chart
-  const avgY = bottom - (averageValue / yCeil) * ph;
-  ctx.save();
-  ctx.strokeStyle = 'rgba(96, 165, 250, 0.45)';
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([5, 5]);
-  ctx.beginPath();
-  ctx.moveTo(px, avgY);
-  ctx.lineTo(px + pw, avgY);
-  ctx.stroke();
-  ctx.restore();
+  return embed;
+}
 
-  // Map Data Points
-  const count = values.length;
-  const stepX = pw / Math.max(1, count - 1);
-  const pts = values.map((val, i) => ({
-    x: px + i * stepX,
-    y: bottom - (val / yCeil) * ph
-  }));
+// ============================================================================
+// MODUŁ INTERAKTYWNY: HISTORIA GRACZA (EMBED + PRZYCISKI TIMEFRAME)
+// ============================================================================
+export async function handleInteractivePlayerHistory(
+  interaction: ChatInputCommandInteraction,
+  ctx: AppContext,
+  liveClan: ClanRecord,
+  resolvedUser: { id: number; name: string; displayName?: string; avatarUrl?: string | null },
+  liveMember?: ClanMember
+) {
+  ctx.history.captureClan(liveClan);
+  let selectedTf: TimeframeMode = '24h';
 
-  if (pts.length >= 2) {
-    // 1. Draw glowing gradient area beneath curve
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(pts[0]!.x, bottom);
-    ctx.lineTo(pts[0]!.x, pts[0]!.y);
+  // 1. Sortowanie członków klanu pod kątem drabinki
+  const sortedMembers: ClanMember[] = [...liveClan.members].sort(
+    (a: ClanMember, b: ClanMember) => (b.battlePoints ?? 0) - (a.battlePoints ?? 0)
+  );
+  const memberIdx = sortedMembers.findIndex((m: ClanMember) => m.userId === resolvedUser.id);
+  const rankNum = memberIdx !== -1 ? memberIdx + 1 : 1;
+  const totalMembers = sortedMembers.length || 1;
 
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p1 = pts[i]!;
-      const p2 = pts[i + 1]!;
-      const mx = (p1.x + p2.x) / 2;
-      ctx.bezierCurveTo(mx, p1.y, mx, p2.y, p2.x, p2.y);
+  // 2. Rywale Ahead / Behind
+  const aheadMember: ClanMember | null = memberIdx > 0 ? (sortedMembers[memberIdx - 1] ?? null) : null;
+  const behindMember: ClanMember | null = memberIdx < totalMembers - 1 ? (sortedMembers[memberIdx + 1] ?? null) : null;
+
+  const aheadUser = aheadMember ? playerRepo.get(aheadMember.userId) : null;
+  const behindUser = behindMember ? playerRepo.get(behindMember.userId) : null;
+
+  const curPts = liveMember?.battlePoints ?? 0;
+  const aheadGap = aheadMember ? (aheadMember.battlePoints ?? 0) - curPts : 0;
+  const behindLead = behindMember ? curPts - (behindMember.battlePoints ?? 0) : 0;
+  
+  const clanTotalPts = liveClan.battlePoints ?? sortedMembers.reduce(
+    (sum: number, m: ClanMember) => sum + (m.battlePoints ?? 0),
+    0
+  );
+  const contribPct = clanTotalPts > 0 ? Math.min(100, Math.round((curPts / clanTotalPts) * 100)) : 100;
+
+  const rivalryPayload: ClanRivalryInfo = {
+    rank: rankNum,
+    totalMembers,
+    userPoints: curPts,
+    clanPoints: clanTotalPts,
+    ahead: aheadMember ? {
+      name: aheadUser?.username ? String(aheadUser.username) : `User_${aheadMember.userId}`,
+      gap: aheadGap
+    } : null,
+    behind: behindMember ? {
+      name: behindUser?.username ? String(behindUser.username) : `User_${behindMember.userId}`,
+      lead: behindLead
+    } : null
+  };
+
+  const leaderboardPayload = sortedMembers.slice(0, 3).map((entry: ClanMember, index: number) => {
+    const cached = playerRepo.get(entry.userId);
+    return {
+      rank: index + 1,
+      name: cached?.username ? String(cached.username) : `User_${entry.userId}`,
+      points: entry.battlePoints ?? 0
+    };
+  });
+
+  // 3. Generator widoku Embed + PNG + 2 Rzędy Przycisków
+  const renderTimeframePayload = async (mode: TimeframeMode) => {
+    const stats = ctx.history.player(resolvedUser.id, 24, liveClan.battleId);
+    const tfConfig = getTimeframeConfig(mode);
+    const buckets: number[] = extractBucketsForTimeframe(stats.points ?? [], tfConfig.totalMs, tfConfig.buckets, curPts);
+    
+    const gainInWindow = buckets.reduce((a: number, b: number) => a + b, 0);
+    const hoursCount = tfConfig.totalMs / (60 * 60 * 1000);
+    const pacePerHour = Math.round(gainInWindow / Math.max(1, hoursCount));
+    const bestBucket = Math.max(...buckets, 0);
+
+    const png = await renderHistory(
+      resolvedUser.displayName || resolvedUser.name,
+      `[${liveClan.name}] •${liveClan.battleId ?? 'SpaceMineBattle2026'}`,
+      stats,
+      resolvedUser.avatarUrl ?? null,
+      mode,
+      rivalryPayload,
+      resolvedUser.id,
+      { leaderboard: leaderboardPayload }
+    );
+
+    const attachment = new AttachmentBuilder(png, { name: 'history.png' });
+
+    const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      (['30m', '1h', '3h'] as TimeframeMode[]).map((tf) =>
+        new ButtonBuilder()
+          .setCustomId(`tf_${tf}`)
+          .setLabel(tf.toUpperCase())
+          .setStyle(tf === mode ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      )
+    );
+
+    const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      (['6h', '12h', '24h'] as TimeframeMode[]).map((tf) =>
+        new ButtonBuilder()
+          .setCustomId(`tf_${tf}`)
+          .setLabel(tf.toUpperCase())
+          .setStyle(tf === mode ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      )
+    );
+
+    const embed = new EmbedBuilder()
+      .setColor(0x0F1626)
+      .setAuthor({
+        name: `${resolvedUser.name} • [${liveClan.name}] Raport Bitewny`,
+        iconURL: resolvedUser.avatarUrl ?? undefined
+      })
+      .setTitle(`📊 Zakres analityczny: ${mode.toUpperCase()}`)
+      .setDescription(
+        `Wojna: **${liveClan.battleId ?? 'Brak bitwy'}** | Pozycja w klanie: **#${rankNum} /${totalMembers}**`
+      )
+      .addFields(
+        {
+          name: `⭐ Zdobyte punkty (${mode.toUpperCase()})`,
+          value: `\`+${fmt(gainInWindow)}\` (${gainInWindow.toLocaleString('en-US')} ⭐)`,
+          inline: true
+        },
+        {
+          name: '⚡ Średnie tempo',
+          value: `\`${fmt(pacePerHour)} /h\``,
+          inline: true
+        },
+        {
+          name: '🏆 Najlepszy skok',
+          value: `\`${fmt(bestBucket)}\``,
+          inline: true
+        },
+        {
+          name: '👑 Pozycja w klanie',
+          value: rankNum === 1 ? '🥇 **Lider klanu**' : (rivalryPayload.ahead ? `Do #${rankNum - 1}: **-${fmt(rivalryPayload.ahead.gap)}**` : 'Brak danych'),
+          inline: true
+        },
+        {
+          name: '🛡️ Przewaga nad rywalem',
+          value: rivalryPayload.behind ? `Nad #${rankNum + 1}: **+${fmt(rivalryPayload.behind.lead)}**` : 'Ostatnia pozycja',
+          inline: true
+        },
+        {
+          name: '💎 Wkład w klan',
+          value: `\`${contribPct}%\` gwiazdek klanu`,
+          inline: true
+        }
+      )
+      .setImage('attachment://history.png')
+      .setFooter({ text: 'R3V0 Tracker • Wybierz zakres poniżej, aby przełączyć dane' })
+      .setTimestamp();
+
+    return {
+      embeds: [embed],
+      files: [attachment],
+      components: [row1, row2]
+    };
+  };
+
+  const initialPayload = await renderTimeframePayload(selectedTf);
+  const replyMsg = await editSafe(interaction, initialPayload);
+  if (!replyMsg) return;
+
+  const collector = replyMsg.createMessageComponentCollector({
+    componentType: ComponentType.Button,
+    time: 180_000
+  });
+
+  collector.on('collect', async (btn: ButtonInteraction) => {
+    if (btn.user.id !== interaction.user.id) {
+      await btn.reply({ content: 'Tylko autor komendy może zmieniać zakres czasu.', ephemeral: true });
+      return;
     }
 
-    ctx.lineTo(pts[pts.length - 1]!.x, bottom);
-    ctx.closePath();
+    const chosenTf = btn.customId.replace('tf_', '') as TimeframeMode;
+    selectedTf = chosenTf;
 
-    const areaGrad = ctx.createLinearGradient(0, py, 0, bottom);
-    areaGrad.addColorStop(0, 'rgba(34, 211, 238, 0.28)');
-    areaGrad.addColorStop(0.7, 'rgba(34, 211, 238, 0.05)');
-    areaGrad.addColorStop(1, 'rgba(34, 211, 238, 0.0)');
-    ctx.fillStyle = areaGrad;
-    ctx.fill();
-    ctx.restore();
+    await btn.deferUpdate();
+    const updatedPayload = await renderTimeframePayload(selectedTf);
+    await interaction.editReply(updatedPayload);
+  });
 
-    // 2. Draw thick smooth stroke
-    ctx.save();
-    ctx.strokeStyle = '#22D3EE';
-    ctx.lineWidth = 3.5;
-    ctx.lineJoin = 'round';
-    ctx.shadowColor = 'rgba(34, 211, 238, 0.5)';
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    ctx.moveTo(pts[0]!.x, pts[0]!.y);
+  collector.on('end', async () => {
+    await interaction.editReply({ components: [] }).catch(() => {});
+  });
+}
 
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p1 = pts[i]!;
-      const p2 = pts[i + 1]!;
-      const mx = (p1.x + p2.x) / 2;
-      ctx.bezierCurveTo(mx, p1.y, mx, p2.y, p2.x, p2.y);
+// ============================================================================
+// GŁÓWNA OBSŁUGA KOMEND SLASH (EKSPORT DLA SRC/INDEX.TS)
+// ============================================================================
+export async function handleCommand(interaction: ChatInputCommandInteraction, ctx: AppContext) {
+  await interaction.deferReply();
+
+  try {
+    const command = interaction.commandName;
+    const subcommand = command === 'history' ? null : interaction.options.getSubcommand();
+    const logoAttachment = getLogoAttachment();
+
+    // ==========================================
+    // 1. WHITELIST
+    // ==========================================
+    if (command === 'whitelist') {
+      if (subcommand === 'add') {
+        const clanName = interaction.options.getString('clan', true);
+        const clan = await ctx.whitelist.add(clanName, interaction.user.id);
+        const capture = ctx.history.captureClan(clan);
+
+        const embed = new EmbedBuilder()
+          .setColor(0x57F287)
+          .setAuthor({ name: 'R3V0 Whitelist System', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+          .setTitle(`✅ Zaindeksowano klan: ${clan.name}`)
+          .setDescription(`Pomyślnie dodano klan do monitoringu. Zarejestrowano **${clan.members.length}** członków i zapisano snapshot (ID: **#${capture.clanSnapshotId}**).`)
+          .addFields(
+            { name: '⚔️ Bitwa', value: `\`${clan.battleId ?? 'Brak bitwy'}\``, inline: true },
+            { name: '🎯 Punkty bitwy', value: `\`${compact(clan.battlePoints)}\``, inline: true },
+            { name: '🏆 Pozycja', value: clan.battlePlace ? `\`#${clan.battlePlace}\`` : '`Brak`', inline: true }
+          )
+          .setTimestamp();
+
+        if (logoAttachment) embed.setThumbnail('attachment://r3v0-logo.png');
+
+        return editSafe(interaction, {
+          embeds: [embed],
+          files: logoAttachment ? [logoAttachment] : []
+        });
+      }
+
+      if (subcommand === 'remove') {
+        const clanName = interaction.options.getString('clan', true);
+        ctx.whitelist.remove(clanName);
+        return editSafe(interaction, { content: `⛔ Zatrzymano monitoring klanu **${clanName}**.` });
+      }
+
+      if (subcommand === 'list') {
+        const list = ctx.whitelist.list();
+        const embed = new EmbedBuilder()
+          .setColor(0x7B2CBF)
+          .setAuthor({ name: 'R3V0 Whitelist System', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+          .setTitle('📋 Monitorowane Klany')
+          .setDescription(list.length ? list.map((name, i) => `**${i + 1}.** 🛡️ \`${name}\``).join('\n') : '*Brak zarejestrowanych klanów w bazie.*')
+          .setFooter({ text: `Łącznie klanów: ${list.length}` })
+          .setTimestamp();
+
+        if (logoAttachment) embed.setThumbnail('attachment://r3v0-logo.png');
+
+        return editSafe(interaction, {
+          embeds: [embed],
+          files: logoAttachment ? [logoAttachment] : []
+        });
+      }
+
+      if (subcommand === 'refresh') {
+        const clanName = interaction.options.getString('clan', true);
+        const clan = await ctx.whitelist.refresh(clanName, false);
+        await ctx.scheduler.processClanUpdates(clan);
+        const capture = ctx.history.captureClan(clan);
+        return editSafe(interaction, {
+          content: `🔄 Odświeżono **${clan.name}** • Członków: **${clan.members.length}** • Punkty: **${compact(clan.battlePoints)}** • Snapshot: **#${capture.clanSnapshotId}**.`
+        });
+      }
     }
-    ctx.stroke();
-    ctx.restore();
 
-    // 3. Circular dots on every hour point
-    pts.forEach(p => {
-      ctx.fillStyle = '#FFFFFF';
-      ctx.strokeStyle = '#22D3EE';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+    // ==========================================
+    // 2. CLAN
+    // ==========================================
+    if (command === 'clan') {
+      if (subcommand === 'leaderboard') {
+        const page = interaction.options.getInteger('page') ?? 1;
+        const response = await ctx.big.clanLeaderboard(page, 20);
+        const rows = (response.data as Array<Record<string, unknown>>) ?? [];
+
+        const medals = ['🥇', '🥈', '🥉'];
+        const formattedRows = rows.map((row, index) => {
+          const rank = (page - 1) * 20 + index + 1;
+          const medal = medals[rank - 1] ?? `\`#${rank}\``;
+          const clanName = String(row.Name ?? 'Unknown');
+          const points = Number(row.Points ?? 0);
+          const members = Number(row.Members ?? 0);
+          return `${medal} **${clanName}** ➔ \`${compact(points)} pts\` • \`${members} os.\``;
+        }).join('\n');
+
+        const embed = new EmbedBuilder()
+          .setColor(0xFEE75C)
+          .setAuthor({ name: 'BIG Games Official Leaderboard', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+          .setTitle(`🏆 Globalny Ranking Klanów • Strona ${page}`)
+          .setDescription(formattedRows || '*API nie zwróciło danych rankingu.*')
+          .setFooter({ text: `Źródło: /api/clans • Odpowiedź: ${response.source}` })
+          .setTimestamp();
+
+        if (logoAttachment) embed.setThumbnail('attachment://r3v0-logo.png');
+
+        return editSafe(interaction, {
+          embeds: [embed],
+          files: logoAttachment ? [logoAttachment] : []
+        });
+      }
+
+      const clanName = interaction.options.getString('clan') ?? defaultClan();
+      if (!whitelistRepo.has(clanName)) {
+        throw new Error(`Klan **${clanName}** nie znajduje się na whitelist. Dodaj go za pomocą \`/whitelist add\`.`);
+      }
+
+      const clan = await ctx.whitelist.refresh(clanName, false);
+
+      if (subcommand === 'info') {
+        const isTop1 = clan.battlePlace === 1;
+        const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
+        const topContributors = clan.members.slice(0, 8);
+
+        const contributorsList = topContributors.map((member: ClanMember, index: number) => {
+          const medal = medals[index] ?? '▫️';
+          const cachedUser = playerRepo.get(member.userId);
+          const username = cachedUser ? String(cachedUser.username) : `User_${member.userId}`;
+          const leaderBadge = member.isOwner ? ' 👑 `LEADER`' : '';
+          return `${medal} **${username}**${leaderBadge}\n╰ ⚔️ \`${compact(member.battlePoints)} pts\` • 💎 \`${compact(member.diamonds)}\``;
+        }).join('\n\n') || '*Brak zarejestrowanych kontrybucji.*';
+
+        const embed = new EmbedBuilder()
+          .setColor(isTop1 ? 0xFEE75C : 0x7B2CBF)
+          .setAuthor({ name: 'R3V0 Whitelist System', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+          .setTitle(`${isTop1 ? '👑' : '🛡️'} ${clan.name} • Clan Overview`)
+          .setDescription(clan.description ? `> *„${clan.description}”*` : '> *Brak opisu klanu.*')
+          .addFields(
+            {
+              name: '⚔️ ━━━ [ AKTYWNA BITWA ] ━━━',
+              value: `**Bitwa:** \`${clan.battleId ?? 'Brak'}\`\n**Punkty:** \`${compact(clan.battlePoints)}\`\n**Miejsce:** \`${clan.battlePlace ? `#${clan.battlePlace}` : 'Brak'}\` ${isTop1 ? '🔥 **TOP 1**' : ''}`,
+              inline: true
+            },
+            {
+              name: '🏰 ━━━ [ INFORMACJE O GILDII ] ━━━',
+              value: `**Członkowie:** \`${clan.members.length}/${clan.memberCapacity}\`\n**Poziom gildii:** \`Level ${clan.guildLevel}\`\n**Diamenty:** \`${compact(clan.depositedDiamonds)} 💎\``,
+              inline: true
+            },
+            {
+              name: '⭐ ━━━ [ TOP KONTRIBUTORZY ] ━━━',
+              value: contributorsList,
+              inline: false
+            }
+          )
+          .setFooter({ text: 'R3V0 Tracker • Zsynchronizowano z Big Games API' })
+          .setTimestamp();
+
+        if (logoAttachment) embed.setThumbnail('attachment://r3v0-logo.png');
+
+        return editSafe(interaction, {
+          embeds: [embed],
+          files: logoAttachment ? [logoAttachment] : []
+        });
+      }
+
+      if (subcommand === 'members') {
+        const rows = clanRepo.members(clan.name);
+        const pageSize = 10;
+        const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+        let currentPage = Math.min(totalPages, Math.max(1, interaction.options.getInteger('page') ?? 1));
+
+        const renderPagePayload = (page: number) => {
+          const slice = rows.slice((page - 1) * pageSize, page * pageSize);
+          const list = slice.map((member, index) => {
+            const rank = (page - 1) * pageSize + index + 1;
+            const userId = Number(member.user_id);
+            const cachedUser = playerRepo.get(userId);
+            const username = cachedUser ? String(cachedUser.username) : `User_${userId}`;
+            const isOwner = Number(member.is_owner) === 1;
+            const points = Number(member.battle_points ?? 0);
+            return `\`#${rank}\` **${username}**${isOwner ? ' 👑' : ''} ➔ \`${compact(points)} ⭐\``;
+          }).join('\n') || '*Brak zarejestrowanych członków na tej stronie.*';
+
+          const embed = new EmbedBuilder()
+            .setColor(0x7B2CBF)
+            .setAuthor({ name: 'R3V0 Clan Members Index', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+            .setTitle(`🛡️ ${clan.name} • Ranking Wewnętrzny`)
+            .setDescription(`**Bitwa:** \`${clan.battleId}\`\n**Suma gwiazdek:** \`${compact(clan.battlePoints)} ⭐\`\n\n${list}`)
+            .setFooter({ text: `Strona ${page}/${totalPages} • Łącznie członków: ${rows.length}` })
+            .setTimestamp();
+
+          if (logoAttachment) embed.setThumbnail('attachment://r3v0-logo.png');
+
+          const buttonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId('clan_page_prev')
+              .setLabel('◀')
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(page <= 1),
+            new ButtonBuilder()
+              .setCustomId('clan_page_indicator')
+              .setLabel(`${page}/${totalPages}`)
+              .setStyle(ButtonStyle.Primary)
+              .setDisabled(true),
+            new ButtonBuilder()
+              .setCustomId('clan_page_next')
+              .setLabel('▶')
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(page >= totalPages),
+            new ButtonBuilder()
+              .setCustomId('clan_page_close')
+              .setLabel('❌ Zamknij')
+              .setStyle(ButtonStyle.Danger)
+          );
+
+          return {
+            embeds: [embed],
+            components: [buttonsRow],
+            files: logoAttachment ? [logoAttachment] : []
+          };
+        };
+
+        const replyMsg = await editSafe(interaction, renderPagePayload(currentPage));
+        if (!replyMsg) return;
+
+        const collector = replyMsg.createMessageComponentCollector({
+          componentType: ComponentType.Button,
+          time: 120_000
+        });
+
+        collector.on('collect', async (btn: ButtonInteraction) => {
+          if (btn.user.id !== interaction.user.id) {
+            await btn.reply({ content: 'Tylko autor komendy może zmieniać strony.', ephemeral: true });
+            return;
+          }
+
+          if (btn.customId === 'clan_page_prev') {
+            currentPage--;
+          } else if (btn.customId === 'clan_page_next') {
+            currentPage++;
+          } else if (btn.customId === 'clan_page_close') {
+            collector.stop('closed');
+            await btn.update({ components: [] });
+            return;
+          }
+
+          await btn.update(renderPagePayload(currentPage));
+        });
+
+        collector.on('end', async (_, reason) => {
+          if (reason !== 'closed') {
+            await interaction.editReply({ components: [] }).catch(() => {});
+          }
+        });
+
+        return;
+      }
+
+      if (subcommand === 'history') {
+        ctx.history.captureClan(clan);
+        const hours = interaction.options.getInteger('hours') ?? 24;
+        const stats = ctx.history.clan(clan.name, hours);
+        const png = await renderHistory(`${clan.name}`, `[${clan.name}] •${clan.battleId ?? 'SpaceMineBattle2026'}`, stats, null, '24h', null);
+        return editSafe(interaction, {
+          files: [new AttachmentBuilder(png, { name: 'clan-history.png' })]
+        });
+      }
+    }
+
+    // ==========================================
+    // 3. PLAYER
+    // ==========================================
+    if (command === 'player') {
+      if (subcommand === 'tracked') {
+        const rows = ctx.player.tracked();
+        const list = rows.map((row) => {
+          const username = row.username ? String(row.username) : `User_${String(row.user_id)}`;
+          const clanName = row.clan_name ? String(row.clan_name) : 'Brak klanu';
+          return `👤 **${username}** ➔ Klan: \`${clanName}\``;
+        }).join('\n');
+
+        const embed = new EmbedBuilder()
+          .setColor(0x7B2CBF)
+          .setAuthor({ name: 'R3V0 Whitelist System', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+          .setTitle('📌 Priorytetowo Śledzeni Gracze')
+          .setDescription(list || '*Brak priorytetowo śledzonych graczy.*')
+          .setTimestamp();
+
+        if (logoAttachment) embed.setThumbnail('attachment://r3v0-logo.png');
+
+        return editSafe(interaction, {
+          embeds: [embed],
+          files: logoAttachment ? [logoAttachment] : []
+        });
+      }
+
+      const input = interaction.options.getString('player', true);
+      const hint = interaction.options.getString('clan') ?? undefined;
+      const resolved = await ctx.player.resolve(input, hint);
+
+      if (subcommand === 'track') {
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+          throw new Error('Wymagane uprawnienie: Zarządzanie Serwerem (Manage Server).');
+        }
+        const clanName = interaction.options.getString('clan', true);
+        const tracked = await ctx.player.track(input, clanName, interaction.user.id);
+        return editSafe(interaction, {
+          content: `✅ Dodano priorytetowe śledzenie dla **${tracked.user.name}** w klanie **${tracked.membership?.clan_name}**.`
+        });
+      }
+
+      if (subcommand === 'untrack') {
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+          throw new Error('Wymagane uprawnienie: Zarządzanie Serwerem (Manage Server).');
+        }
+        ctx.player.untrack(resolved.user.id);
+        return editSafe(interaction, {
+          content: `🗑️ Usunięto priorytetowe śledzenie dla gracza **${resolved.user.name}**.`
+        });
+      }
+
+      if (!resolved.membership) {
+        throw new Error(`Gracz **${resolved.user.name}** nie został odnaleziony w żadnym z monitorowanych klanów.`);
+      }
+
+      const liveClan = await ctx.whitelist.refresh(resolved.membership.clan_name, false);
+      const liveMember = liveClan.members.find((m: ClanMember) => m.userId === resolved.user.id);
+
+      if (subcommand === 'info') {
+        const isOwner = liveMember?.isOwner ?? false;
+        const embed = new EmbedBuilder()
+          .setColor(0x7B2CBF)
+          .setAuthor({ name: 'R3V0 Whitelist System', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+          .setTitle(`👤 ${resolved.user.displayName} (@${resolved.user.name})`)
+          .setDescription(`> Profil gracza powiązanego z klanem **${liveClan.name}**.`)
+          .addFields(
+            { name: '🛡️ Klan', value: `\`${liveClan.name}\``, inline: true },
+            { name: '👑 Rola w klanie', value: isOwner ? '`OWNER / LEADER`' : `\`Poziom: ${liveMember?.permissionLevel ?? 0}\``, inline: true },
+            { name: '⚔️ Punkty bitwy', value: `\`${compact(liveMember?.battlePoints ?? 0)}\``, inline: true },
+            { name: '💎 Wpłacone diamenty', value: `\`${compact(liveMember?.diamonds ?? 0)} 💎\``, inline: true },
+            { name: '🆔 UserID', value: `\`${resolved.user.id}\``, inline: true }
+          )
+          .setTimestamp();
+
+        if (resolved.user.avatarUrl) {
+          embed.setThumbnail(resolved.user.avatarUrl);
+        } else if (logoAttachment) {
+          embed.setThumbnail('attachment://r3v0-logo.png');
+        }
+
+        const sorted: ClanMember[] = [...liveClan.members].sort(
+          (a: ClanMember, b: ClanMember) => (b.battlePoints ?? 0) - (a.battlePoints ?? 0)
+        );
+        const playerRankIndex = sorted.findIndex((entry: ClanMember) => entry.userId === resolved.user.id);
+        const playerRank = playerRankIndex >= 0 ? playerRankIndex + 1 : null;
+        const roleLabel = isOwner ? 'OWNER / LEADER' : `PERMISSION ${liveMember?.permissionLevel ?? 0}`;
+
+        const card = await renderPlayerCard(
+          resolved.user.displayName || resolved.user.name,
+          `[${liveClan.name}] •${liveClan.battleId ?? 'SpaceMineBattle2026'}`,
+          resolved.user.avatarUrl ?? null,
+          resolved.user.id,
+          { rank: playerRank, roleLabel }
+        );
+
+        embed.setImage('attachment://player-card.png');
+
+        const filesToSend = [new AttachmentBuilder(card, { name: 'player-card.png' })];
+        if (logoAttachment) filesToSend.push(logoAttachment);
+        return editSafe(interaction, { embeds: [embed], files: filesToSend });
+      }
+
+      if (subcommand === 'history') {
+        return await handleInteractivePlayerHistory(interaction, ctx, liveClan, resolved.user, liveMember);
+      }
+    }
+
+    // ==========================================
+    // 4. QUICK HISTORY
+    // ==========================================
+    if (command === 'history') {
+      const playerInput = interaction.options.getString('player') ?? interaction.options.getString('gracz');
+
+      if (!playerInput) {
+        const clanName = defaultClan();
+        if (!whitelistRepo.has(clanName)) {
+          throw new Error(`Klan **${clanName}** nie jest na whitelist. Dodaj go przez \`/whitelist add\`.`);
+        }
+
+        const clan = await ctx.whitelist.refresh(clanName, false);
+        ctx.history.captureClan(clan);
+        const stats = ctx.history.clan24h(clan.name);
+        const png = await render24hChart({
+          title: `${clan.name} • Historia 24h`,
+          subtitle: `${clan.battleId ?? 'Brak bitwy'} • ${clan.battlePlace ? `#${clan.battlePlace}` : 'Brak pozycji'}`,
+          current: stats.current,
+          delta24h: stats.gain24h,
+          deltaPct24h: stats.deltaPct24h,
+          points: stats.points
+        });
+
+        const files = [new AttachmentBuilder(png, { name: 'history.png' })];
+        if (logoAttachment) files.push(logoAttachment);
+
+        return editSafe(interaction, {
+          embeds: [historyEmbed(`${clan.name} • Ostatnie 24h`, stats.current, stats.gain24h, stats.deltaPct24h, Boolean(logoAttachment))],
+          files
+        });
+      }
+
+      const resolved = await ctx.player.resolve(playerInput);
+      if (!resolved.membership) {
+        throw new Error(`Gracz **${resolved.user.name}** nie został odnaleziony w monitorowanych klanach.`);
+      }
+
+      const clan = await ctx.whitelist.refresh(resolved.membership.clan_name, false);
+      const member = clan.members.find((item: ClanMember) => item.userId === resolved.user.id);
+      return await handleInteractivePlayerHistory(interaction, ctx, clan, resolved.user, member);
+    }
+
+    // ==========================================
+    // 5. BATTLE DASHBOARDS
+    // ==========================================
+    if (command === 'battle') {
+      if (subcommand === 'clan') {
+        const clanName = interaction.options.getString('clan') ?? defaultClan();
+        if (!whitelistRepo.has(clanName)) throw new Error('Klan nie znajduje się na whitelist.');
+        const clan = await ctx.whitelist.refresh(clanName, false);
+        ctx.history.captureClan(clan);
+        const stats = ctx.history.clan(clan.name, interaction.options.getInteger('hours') ?? 24);
+        const png = await renderHistory(
+          `${clan.name}`,
+          `[${clan.name}] •${clan.battleId ?? 'SpaceMineBattle2026'}`,
+          stats,
+          null,
+          '24h',
+          null
+        );
+        return editSafe(interaction, {
+          files: [new AttachmentBuilder(png, { name: 'battle-clan.png' })]
+        });
+      }
+
+      if (subcommand === 'player') {
+        const input = interaction.options.getString('player', true);
+        const resolved = await ctx.player.resolve(input, interaction.options.getString('clan') ?? undefined);
+        if (!resolved.membership) throw new Error('Gracz nie został znaleziony w monitorowanych klanach.');
+        const clan = await ctx.whitelist.refresh(resolved.membership.clan_name, false);
+        const liveMember = clan.members.find((m: ClanMember) => m.userId === resolved.user.id);
+        return await handleInteractivePlayerHistory(interaction, ctx, clan, resolved.user, liveMember);
+      }
+    }
+
+    // ==========================================
+    // 6. GAME: RAP & MASTERY
+    // ==========================================
+    if (command === 'game') {
+      if (subcommand === 'rap') {
+        const result = await ctx.rap.find(interaction.options.getString('item', true));
+        const png = await renderRap(result);
+        const files = [new AttachmentBuilder(png, { name: 'rap.png' })];
+        if (logoAttachment) files.push(logoAttachment);
+
+        const embed = new EmbedBuilder()
+          .setColor(0x7B2CBF)
+          .setAuthor({ name: 'BIG Games RAP Tracker', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+          .setTitle(`💎 ${result.name} • Wycena RAP`)
+          .setDescription(result.variants.map((v) => {
+            const deltaSign = v.delta >= 0 ? '+' : '';
+            return `**${v.label}** ➔ \`${compact(v.value)} 💎\` • ${deltaSign}${compact(v.delta)} (${deltaSign}${v.deltaPct.toFixed(1)}%)`;
+          }).join('\n'))
+          .setImage('attachment://rap.png')
+          .setFooter({ text: `${result.baselineLabel} stanowi bazę referencyjną +/-` })
+          .setTimestamp();
+
+        return editSafe(interaction, { embeds: [embed], files });
+      }
+
+      if (subcommand === 'mastery') {
+        const type = interaction.options.getString('type', true);
+        const startLvl = interaction.options.getInteger('start_level', true);
+        const endLvl = interaction.options.getInteger('end_level', true);
+        const hasClanBoost = interaction.options.getBoolean('clan_boost') ?? true;
+
+        if (startLvl >= endLvl) {
+          throw new Error('Poziom początkowy musi być mniejszy od poziomu docelowego.');
+        }
+
+        const calc = masteryService.calculate(type, startLvl, endLvl, hasClanBoost);
+
+        const actionFields = calc.groups.map(g => {
+          const list = g.items.map(it => {
+            const costStr = it.estGemCost ? ` *(~${compact(it.estGemCost)} 💎)*` : '';
+            return `• **${it.name}:** \`${it.amountNeeded.toLocaleString()}\` sztuk${costStr}`;
+          }).join('\n');
+
+          const rates = g.items.map(it => `**${it.name}:** \`${it.xpEach} XP\``).join('\n');
+
+          return [
+            {
+              name: `│ ${g.actionName} (Wartości XP) │`,
+              value: rates,
+              inline: true
+            },
+            {
+              name: `│ Wymagana Ilość Przedmiotów │`,
+              value: list,
+              inline: false
+            }
+          ];
+        }).flat();
+
+        const embed = new EmbedBuilder()
+          .setColor(calc.color)
+          .setTitle(calc.title)
+          .setThumbnail(calc.iconUrl)
+          .addFields(
+            {
+              name: '│ Informacje o Poziomach │',
+              value: `**Poziom startowy:** \`${calc.startLevel}\`   |   **Poziom docelowy:** \`${calc.endLevel}\`\n**Wymagany XP:** \`${calc.totalXpRequired.toLocaleString('en-US', { maximumFractionDigits: 1 })}\``,
+              inline: false
+            },
+            {
+              name: 'Clan Boost',
+              value: calc.hasClanBoost ? '`✅ 10% Redukcji XP (Aktywne)`' : '`❌ Brak redukcji`',
+              inline: false
+            },
+            ...actionFields
+          )
+          .setFooter({ text: calc.infoNotes ?? 'R3V0 Full Mastery Calculator • PS99' })
+          .setTimestamp();
+
+        return editSafe(interaction, { embeds: [embed] });
+      }
+    }
+
+    // ==========================================
+    // 7. BOT & ADMIN
+    // ==========================================
+    if (command === 'bot' && subcommand === 'status') {
+      const status = ctx.scheduler.status();
+      const embed = new EmbedBuilder()
+        .setColor(0x57F287)
+        .setAuthor({ name: 'R3V0 Tracker System', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+        .setTitle('🤖 Status Operacyjny Bota')
+        .addFields(
+          { name: '🔄 Tracker Schedulera', value: status.running ? '`🟢 Aktywny`' : '`🔴 Zatrzymany`', inline: true },
+          { name: '🛡️ Monitorowane Klany', value: `\`${status.whitelist}\``, inline: true },
+          { name: '💾 Baza Danych', value: '`🟢 SQLite OK`', inline: true }
+        )
+        .setTimestamp();
+
+      if (logoAttachment) embed.setThumbnail('attachment://r3v0-logo.png');
+
+      return editSafe(interaction, {
+        embeds: [embed],
+        files: logoAttachment ? [logoAttachment] : []
+      });
+    }
+
+    if (command === 'admin') {
+      if (subcommand === 'set-main-clan') {
+        const clanName = interaction.options.getString('clan', true);
+        if (!whitelistRepo.has(clanName)) await ctx.whitelist.add(clanName, interaction.user.id);
+        settingsRepo.set('main_clan', clanName);
+        return editSafe(interaction, { content: `🎯 Główny klan został ustawiony na **${clanName}**.` });
+      }
+
+      if (subcommand === 'set-logs-channel') {
+        const channel = interaction.options.getChannel('channel', true);
+        settingsRepo.set('logs_channel_id', channel.id);
+        return editSafe(interaction, { content: `📢 Kanał alertów i logów klanowych został ustawiony na <#${channel.id}>.` });
+      }
+
+      if (subcommand === 'diagnostics') {
+        const clanName = defaultClan();
+        try {
+          const clan = await ctx.whitelist.refresh(clanName, false);
+          const history = ctx.history.captureClan(clan);
+          const embed = new EmbedBuilder()
+            .setColor(0x57F287)
+            .setAuthor({ name: 'R3V0 Diagnostyka Systemu', iconURL: logoAttachment ? 'attachment://r3v0-logo.png' : undefined })
+            .setTitle('🩺 Wyniki Diagnostyki')
+            .addFields(
+              { name: '🌐 BIG Games API', value: '`🟢 Połączono (OK)`', inline: true },
+              { name: '🛡️ Główny klan', value: `\`${clan.name}\``, inline: true },
+              { name: '👥 Zindeksowani gracze', value: `\`${clan.members.length}\``, inline: true },
+              { name: '⚔️ Punkty bitwy', value: `\`${compact(clan.battlePoints)}\``, inline: true },
+              { name: '🏆 Aktywna bitwa', value: `\`${clan.battleId ?? 'Brak'}\``, inline: true },
+              { name: '📸 Zapis snapshotu', value: `\`#${history.clanSnapshotId} (${history.playerSnapshotsInserted} graczy)\``, inline: true }
+            )
+            .setTimestamp();
+
+          if (logoAttachment) embed.setThumbnail('attachment://r3v0-logo.png');
+
+          return editSafe(interaction, {
+            embeds: [embed],
+            files: logoAttachment ? [logoAttachment] : []
+          });
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          return editSafe(interaction, {
+            embeds: [new EmbedBuilder()
+              .setColor(0xED4245)
+              .setTitle('❌ Diagnostyka nie powiodła się')
+              .setDescription(`\`\`\`\n${message.slice(0, 3900)}\n\`\`\``)]
+          });
+        }
+      }
+    }
+
+    throw new Error('Nieznana komenda.');
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return editSafe(interaction, {
+      embeds: [new EmbedBuilder()
+        .setColor(0xED4245)
+        .setTitle('❌ Wystąpił błąd podczas wykonywania komendy')
+        .setDescription(`\`\`\`\n${message.slice(0, 3900)}\n\`\`\``)]
     });
-
-    // 4. Latest Hour Pill Tooltip over the last point
-    const lastP = pts[pts.length - 1]!;
-    const pillVal = fmt(latestValue);
-    const pillW = 85;
-    const pillH = 28;
-    const pillX = Math.max(px, Math.min(px + pw - pillW, lastP.x - pillW + 12));
-    const pillY = lastP.y - pillH - 12;
-
-    rr(ctx, pillX, pillY, pillW, pillH, 8, 'rgba(15, 23, 42, 0.92)', '#22D3EE', 1.2);
-    txt(ctx, pillVal, pillX + pillW / 2, pillY + 18, 13, '#22D3EE', true, 'center');
   }
-
-  // X-Axis Time Ticks
-  const xTickIndices = [0, 6, 12, 18, count - 1];
-  xTickIndices.forEach((idx, i) => {
-    const lx = px + idx * stepX;
-    const label = labels[i] ?? (i === 4 ? 'NOW' : `${24 - i * 6}h ago`);
-    txt(ctx, label, lx, bottom + 24, 12, i === 4 ? C.textLight : C.textMuted, i === 4, 'center');
-  });
 }
 
-// ============================================================================
-// MAIN RENDER EXPORT (1:1 LAYOUT)
-// ============================================================================
-
-export async function renderHistory(
-  title: string,
-  subtitle: string,
-  stats: HistoryStats,
-  avatarUrl: string | null,
-  selectedTimeframe: TimeframeMode = '24h',
-  rivalry?: ClanRivalryInfo | null,
-  userId?: number | null,
-  options: HistoryRenderOptions = {},
-): Promise<Buffer> {
-  const w = 1520, h = 920;
-  const scale = options.scale === 1 ? 1 : 2;
-  const canvas = createCanvas(w * scale, h * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-
-  registerOptionalFonts(options.assetDirectory);
-
-  // Load avatar and rivals avatars
-  const avatar = await loadRemote(avatarUrl ?? options.avatarRenderUrl);
-
-  // 1. Dark Background with Grid Pattern
-  drawAppBackground(ctx, w, h);
-
-  // 2. Main Outer Card (35px margin)
-  const mx = 35, my = 35, mw = w - 70, mh = h - 70;
-  rr(ctx, mx, my, mw, mh, 20, C.bgCard, C.borderCard, 1);
-
-  // Neon Gradient Top Line (Matching Screenshots)
-  const topGrad = ctx.createLinearGradient(mx + 20, 0, mx + mw - 20, 0);
-  topGrad.addColorStop(0, '#2DD4BF');
-  topGrad.addColorStop(0.3, '#38BDF8');
-  topGrad.addColorStop(0.7, '#C084FC');
-  topGrad.addColorStop(1, '#F472B6');
-  rr(ctx, mx + 20, my + 1, mw - 40, 3, 1.5, topGrad);
-
-  // 3. Parse Clan Tag & Event Name
-  const cleanSubtitle = subtitle.replace(/[\[\]]/g, '');
-  const parts = cleanSubtitle.split(/[•|]/).map(s => s.trim()).filter(Boolean);
-  const clanTag = parts[0] || 'MCWV';
-  const eventName = parts[1] || 'SpaceMineBattle2026';
-
-  // 4. Extract 24 Hourly Buckets
-  const tfConfig = getTimeframeConfig(selectedTimeframe);
-  const buckets = extractBucketsForTimeframe(stats?.points ?? [], tfConfig.totalMs, 24, stats?.current);
-  const total24h = buckets.reduce((a, b) => a + b, 0);
-  const avgHour = total24h / 24;
-  const bestHour = Math.max(...buckets, 0);
-  const latestHour = buckets[buckets.length - 1] ?? 0;
-  const currentTotal = safeNum(stats?.current, total24h);
-
-  // 5. Header Area: Left Profile Block
-  const avX = mx + 68;
-  const avY = my + 72;
-  const avR = 40;
-  drawCircularAvatar(ctx, avatar, avX, avY, avR, '#38BDF8');
-
-  // Player Name
-  txt(ctx, title, avX + 54, avY - 8, 32, C.textLight, true, 'left');
-
-  // Clan Tag Badge & Event Name
-  const badgeX = avX + 54;
-  const badgeY = avY + 12;
-  const badgeW = clanTag.length * 9 + 20;
-  rr(ctx, badgeX, badgeY, badgeW, 22, 6, '#0E1E28', '#104A3C', 1);
-  txt(ctx, `[${clanTag}]`, badgeX + badgeW / 2, badgeY + 15, 11, C.accentTag, true, 'center');
-  txt(ctx, eventName, badgeX + badgeW + 12, badgeY + 16, 14, C.textSecondary, false, 'left');
-
-  // 6. Header Area: Global Rank Card (Top Right)
-  const rankCardW = 540;
-  const rankCardH = 150;
-  const rankCardX = mx + mw - rankCardW - 24;
-  const rankCardY = my + 24;
-  const globalRank = rivalry?.rank ?? 280;
-  const pctBehind = 99.37;
-
-  drawGlobalRankCard(
-    ctx,
-    rankCardX, rankCardY, rankCardW, rankCardH,
-    globalRank,
-    '44.05k',
-    pctBehind,
-    rivalry?.ahead ? { name: rivalry.ahead.name } : null,
-    rivalry?.behind ? { name: rivalry.behind.name } : null
-  );
-
-  // 7. Middle Top Cards (Event stars & Clan rank)
-  const cardRowY = my + 130;
-  const twoCardW = 400;
-  const cardH = 92;
-
-  drawStatCard(ctx, mx + 24, cardRowY, twoCardW, cardH, 'Event stars', fmt(currentTotal), C.accentCyan, 'star');
-  drawStatCard(ctx, mx + 24 + twoCardW + 14, cardRowY, twoCardW, cardH, `Clan rank · ${clanTag}`, `${globalRank}/75`, C.accentMint, 'trophy');
-
-  // 8. Row of 4 Stat Cards
-  const fourRowY = cardRowY + cardH + 16;
-  const fourCardW = (mw - 48 - 42) / 4;
-
-  drawStatCard(ctx, mx + 24, fourRowY, fourCardW, cardH, 'Total points · 24h', fmt(total24h), C.accentMint, 'star');
-  drawStatCard(ctx, mx + 24 + (fourCardW + 14), fourRowY, fourCardW, cardH, 'Average / hour', fmt(avgHour), C.accentBlue, 'bars');
-  drawStatCard(ctx, mx + 24 + (fourCardW + 14) * 2, fourRowY, fourCardW, cardH, 'Best hour', fmt(bestHour), C.accentPurple, 'trophy');
-  drawStatCard(ctx, mx + 24 + (fourCardW + 14) * 3, fourRowY, fourCardW, cardH, 'Latest hour', fmt(latestHour), C.accentCyan, 'bolt');
-
-  // 9. Bottom Large Spline Chart (Hourly performance)
-  const chartY = fourRowY + cardH + 16;
-  const chartW = mw - 48;
-  const chartH = mh - (chartY - my) - 24;
-
-  drawSplineChart(
-    ctx,
-    mx + 24, chartY, chartW, chartH,
-    buckets,
-    tfConfig.labels,
-    avgHour,
-    latestHour
-  );
-
-  return canvas.encode('png');
-}
-
-// ============================================================================
-// COMPATIBILITY EXPORTS FOR PLAYER CARD & RAP
-// ============================================================================
-
-export async function renderPlayerCard(
-  title: string,
-  subtitle: string,
-  avatarUrl: string | null,
-  userId?: number | null,
-  options: PlayerCardRenderOptions = {},
-): Promise<Buffer> {
-  const w = 640, h = 420;
-  const canvas = createCanvas(w, h);
-  const ctx = canvas.getContext('2d');
-
-  drawAppBackground(ctx, w, h);
-  rr(ctx, 24, 24, w - 48, h - 48, 18, C.bgCard, C.borderCard, 1);
-
-  const avatar = await loadRemote(avatarUrl);
-  drawCircularAvatar(ctx, avatar, 90, 90, 44, '#38BDF8');
-
-  txt(ctx, title, 155, 82, 28, C.textLight, true);
-  txt(ctx, subtitle, 155, 108, 14, C.textSecondary, false);
-
-  rr(ctx, 40, 160, w - 80, 80, 14, C.bgSubCard, C.borderCard, 1);
-  txt(ctx, 'ASSIGNED ROLE', 60, 192, 11, C.textMuted, false);
-  txt(ctx, options.roleLabel ?? 'MEMBER', 60, 222, 22, C.accentMint, true);
-
-  return canvas.encode('png');
-}
-
-export async function renderRap(r: RapResult): Promise<Buffer> {
-  const w = 1200, h = 680, scale = 2;
-  const canvas = createCanvas(w * scale, h * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale);
-
-  drawAppBackground(ctx, w, h);
-  rr(ctx, 35, 35, w - 70, h - 70, 20, C.bgCard, C.borderCard, 1);
-
-  txt(ctx, 'RAP TRACKER', 60, 85, 32, C.textLight, true);
-  txt(ctx, 'PET VALUATION & MARKET INTELLIGENCE', 60, 112, 12, C.textMuted, false);
-
-  rr(ctx, 60, 145, 340, 450, 16, C.bgSubCard, C.borderCard, 1);
-  const img = await loadRemote(r.imageUrl);
-  if (img) {
-    const f = Math.min(260 / img.width, 240 / img.height);
-    const dw = img.width * f, dh = img.height * f;
-    ctx.drawImage(img, 60 + (340 - dw) / 2, 180 + (240 - dh) / 2, dw, dh);
-  }
-  txt(ctx, r.name, 230, 480, 22, C.textLight, true, 'center');
-
-  rr(ctx, 420, 145, 720, 450, 16, C.bgSubCard, C.borderCard, 1);
-  txt(ctx, 'MARKET VARIANTS', 450, 185, 18, C.textLight, true);
-
-  const vars = Array.isArray(r.variants) ? r.variants.slice(0, 5) : [];
-  vars.forEach((v, i) => {
-    const yy = 215 + i * 65;
-    rr(ctx, 450, yy, 660, 52, 12, '#1E2536', 'rgba(255, 255, 255, 0.05)', 1);
-    txt(ctx, v.label, 470, yy + 32, 16, C.textLight, true);
-    txt(ctx, fmt(v.value), 820, yy + 32, 18, C.textLight, true, 'right');
-    const d = v.delta ?? 0;
-    txt(ctx, `${d >= 0 ? '+' : ''}${fmt(d)}`, 1080, yy + 32, 16, d >= 0 ? C.accentMint : '#EF4444', true, 'right');
-  });
-
-  return canvas.encode('png');
-}
+export default handleCommand;

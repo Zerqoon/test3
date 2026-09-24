@@ -7,8 +7,8 @@ import type { RapResult } from '../services/RapService.js';
 import type { HistoryPoint } from '../types.js';
 
 // ============================================================================
-// R3V0 PURE VECTOR ENGINE V11 — HIGH-ENERGY CARTOON PS99 EDITION
-// Zero external asset dependencies. 100% procedural 4K graphics.
+// R3V0 PURE VECTOR ENGINE V11 — ZERO ASSET DEPENDENCIES
+// Full TypeScript Strict Compliance (noUncheckedIndexedAccess & noImplicitAny)
 // ============================================================================
 
 export type TimeframeMode = '30m' | '1h' | '3h' | '6h' | '12h' | '24h';
@@ -22,6 +22,16 @@ export interface ClanRivalryInfo {
   behind?: { name: string; lead: number } | null;
 }
 
+export interface VectorPoint { x: number; y: number; val: number }
+export interface TierStyle {
+  label: string;
+  color: string;
+  glowColor: string;
+  badgeBg: string;
+  badgeBorder: string;
+}
+export interface Particle { x: number; y: number; size: number; alpha: number; speed: number }
+export interface StarParticle { x: number; y: number; r: number; alpha: number }
 export interface ClanLeaderboardEntry { rank: number; name: string; points: number }
 
 export interface HistoryRenderOptions {
@@ -41,6 +51,9 @@ export interface PlayerCardRenderOptions extends HistoryRenderOptions {
 // ============================================================================
 // COLOR PALETTE & FONTS
 // ============================================================================
+
+type Paint = SKRSContext2D['fillStyle'];
+type Align = 'left' | 'center' | 'right';
 
 const C = {
   bgDark: '#080114',
@@ -97,6 +110,15 @@ export function fmtExact(n: number | null | undefined): string {
   return safeNum(n, 0).toLocaleString('en-US');
 }
 
+export function getPerformanceTier(latestVal: number, avgVal: number): TierStyle {
+  if (latestVal <= 0) return { label: 'IDLE', color: '#C4B5FD', glowColor: 'rgba(196,181,253,.35)', badgeBg: 'rgba(76,29,149,.45)', badgeBorder: '#8B5CF6' };
+  const ratio = avgVal > 0 ? latestVal / avgVal : 1;
+  if (ratio < 0.6) return { label: 'LOW TEMPO', color: '#F9A8D4', glowColor: 'rgba(249,168,212,.38)', badgeBg: 'rgba(131,24,67,.40)', badgeBorder: '#EC4899' };
+  if (ratio < 1.3) return { label: 'STEADY', color: '#E9D5FF', glowColor: 'rgba(233,213,255,.36)', badgeBg: 'rgba(88,28,135,.40)', badgeBorder: '#C084FC' };
+  if (ratio < 2.5) return { label: 'SURGING', color: '#67E8F9', glowColor: 'rgba(103,232,249,.42)', badgeBg: 'rgba(8,145,178,.30)', badgeBorder: '#22D3EE' };
+  return { label: 'OVERCLOCKED', color: '#F0ABFC', glowColor: 'rgba(240,171,252,.50)', badgeBg: 'rgba(147,51,234,.45)', badgeBorder: '#D946EF' };
+}
+
 export function getTimeframeConfig(mode: TimeframeMode): { totalMs: number; buckets: number; labels: string[] } {
   switch (mode) {
     case '30m': return { totalMs: 30 * 60_000, buckets: 14, labels: ['25m', '20m', '15m', '10m', '5m', 'NOW'] };
@@ -109,9 +131,65 @@ export function getTimeframeConfig(mode: TimeframeMode): { totalMs: number; buck
   }
 }
 
+export function extractBucketsForTimeframe(
+  points: HistoryPoint[],
+  totalMs: number,
+  bucketCount: number,
+  currentVal?: number,
+): number[] {
+  const buckets = new Array<number>(bucketCount).fill(0);
+  void currentVal;
+  if (!Array.isArray(points) || points.length < 2) return buckets;
+  const now = Date.now();
+  const step = totalMs / bucketCount;
+  const sorted = [...points]
+    .filter((p): p is HistoryPoint => typeof p?.ts === 'number' && Number.isFinite(p.ts) && typeof p?.value === 'number' && Number.isFinite(p.value))
+    .sort((a, b) => a.ts - b.ts);
+
+  for (let i = 0; i < bucketCount; i++) {
+    const start = now - (bucketCount - i) * step;
+    const end = start + step;
+    const a = sorted.filter(p => p.ts <= start).slice(-1)[0] ?? sorted[0];
+    const b = sorted.filter(p => p.ts <= end).slice(-1)[0] ?? a;
+    if (a && b) buckets[i] = Math.max(0, b.value - a.value);
+  }
+  return buckets;
+}
+
+export function buildClampedSmoothPath(ctx: SKRSContext2D, points: VectorPoint[], bottomY: number): void {
+  if (points.length <= 1) return;
+  const p0 = points[0];
+  const p1 = points[1];
+  if (!p0 || !p1) return;
+  if (points.length === 2) { ctx.lineTo(p1.x, p1.y); return; }
+  for (let i = 0; i < points.length - 1; i++) {
+    const curr0 = i > 0 ? (points[i - 1] ?? points[i]!) : points[i]!;
+    const curr1 = points[i]!;
+    const curr2 = points[i + 1]!;
+    const curr3 = i < points.length - 2 ? (points[i + 2] ?? curr2) : curr2;
+    if (curr1.val === 0 && curr2.val === 0) { ctx.lineTo(curr2.x, bottomY); continue; }
+    const cp1x = curr1.x + (curr2.x - curr0.x) / 6;
+    const cp1y = curr1.y + (curr2.y - curr0.y) / 6;
+    const cp2x = curr2.x - (curr3.x - curr1.x) / 6;
+    const cp2y = curr2.y - (curr3.y - curr1.y) / 6;
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, curr2.x, curr2.y);
+  }
+}
+
 // ============================================================================
 // VECTOR DRAWING PRIMITIVES
 // ============================================================================
+
+function line(ctx: SKRSContext2D, x1: number, y1: number, x2: number, y2: number, color: string, width = 1): void {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.restore();
+}
 
 function roundedPath(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const rr = Math.max(0, Math.min(r, w / 2, h / 2));
@@ -128,7 +206,7 @@ function roundedPath(ctx: SKRSContext2D, x: number, y: number, w: number, h: num
   ctx.closePath();
 }
 
-function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number, fill?: string | CanvasGradient | null, stroke?: string | CanvasGradient | null, strokeWidth = 1): void {
+function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number, fill?: Paint | null, stroke?: Paint | null, strokeWidth = 1): void {
   ctx.save();
   roundedPath(ctx, x, y, w, h, r);
   if (fill) { ctx.fillStyle = fill; ctx.fill(); }
@@ -136,7 +214,7 @@ function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: n
   ctx.restore();
 }
 
-function drawDiamondStud(ctx: SKRSContext2D, cx: number, cy: number, size = 6, color = '#FFFFFF'): void {
+export function drawDiamondStud(ctx: SKRSContext2D, cx: number, cy: number, size = 6, color = '#FFFFFF'): void {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(Math.PI / 4);
@@ -147,7 +225,7 @@ function drawDiamondStud(ctx: SKRSContext2D, cx: number, cy: number, size = 6, c
   ctx.restore();
 }
 
-function txt(ctx: SKRSContext2D, text: string, x: number, y: number, size: number, color = C.textLight, bold = false, align: 'left' | 'center' | 'right' = 'left', maxW?: number): void {
+function txt(ctx: SKRSContext2D, text: string, x: number, y: number, size: number, color = C.textLight, bold = false, align: Align = 'left', maxW?: number): void {
   ctx.save();
   ctx.font = `${bold ? 700 : 500} ${size}px ${bold ? DISPLAY : BODY}`;
   ctx.textAlign = align;
@@ -161,7 +239,7 @@ function txt(ctx: SKRSContext2D, text: string, x: number, y: number, size: numbe
   ctx.restore();
 }
 
-function caps(ctx: SKRSContext2D, text: string, x: number, y: number, size = 11, color = C.textMuted, align: 'left' | 'center' | 'right' = 'left', tracking = 1.6): void {
+function caps(ctx: SKRSContext2D, text: string, x: number, y: number, size = 11, color = C.textMuted, align: Align = 'left', tracking = 1.6): void {
   ctx.save();
   const t = String(text).toUpperCase();
   ctx.font = `700 ${size}px ${BODY}`;
@@ -172,7 +250,7 @@ function caps(ctx: SKRSContext2D, text: string, x: number, y: number, size = 11,
   let dx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
   [...t].forEach((ch, i) => {
     ctx.fillText(ch, dx, y);
-    dx += widths[i]! + tracking;
+    dx += (widths[i] ?? 0) + tracking;
   });
   ctx.restore();
 }
@@ -197,7 +275,6 @@ function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h:
   const bevelH = 6;
   const faceH = h - bevelH;
 
-  // 1. Dark Bevel Base / Drop Shadow
   ctx.save();
   ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
   ctx.shadowBlur = 18;
@@ -205,7 +282,6 @@ function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h:
   rr(ctx, x, y + bevelH, w, faceH, r, C.panelBevel);
   ctx.restore();
 
-  // 2. Card Surface Gradient
   const grad = ctx.createLinearGradient(x, y, x, y + faceH);
   grad.addColorStop(0, C.panelBgTop);
   grad.addColorStop(0.4, C.panelBgMid);
@@ -213,7 +289,6 @@ function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h:
   rr(ctx, x, y, w, faceH, r, grad, C.panelBorder, 3);
   rr(ctx, x + 3.5, y + 3.5, w - 7, faceH - 7, r - 3, null, 'rgba(240, 171, 252, 0.35)', 1.5);
 
-  // 3. Crisp Hexagonal / Pattern Texture Overlay
   ctx.save();
   roundedPath(ctx, x + 4, y + 4, w - 8, faceH - 8, r - 4);
   ctx.clip();
@@ -227,7 +302,6 @@ function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h:
     }
   }
 
-  // 4. Gloss shine
   const gloss = ctx.createLinearGradient(x, y, x, y + 55);
   gloss.addColorStop(0, 'rgba(255, 255, 255, 0.2)');
   gloss.addColorStop(1, 'rgba(255, 255, 255, 0)');
@@ -235,7 +309,6 @@ function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h:
   ctx.fillRect(x, y, w, 55);
   ctx.restore();
 
-  // 5. Gem Studs
   drawDiamondStud(ctx, x + 12, y + 12, 5);
   drawDiamondStud(ctx, x + w - 12, y + 12, 5);
   drawDiamondStud(ctx, x + 12, y + faceH - 12, 5);
@@ -243,7 +316,7 @@ function drawCartoonCard(ctx: SKRSContext2D, x: number, y: number, w: number, h:
 }
 
 // ============================================================================
-// PROCEDURAL PS99 PETS & STAGE ASSETS (100% IN-ENGINE)
+// COMPATIBILITY VECTOR ICONS & PROCEDURAL PETS
 // ============================================================================
 
 export function drawVectorStar(ctx: SKRSContext2D, cx: number, cy: number, radius: number, fill = '#FFF', stroke = '#A855F7', lw = 3): void {
@@ -288,6 +361,192 @@ export function drawVectorCrown(ctx: SKRSContext2D, cx: number, cy: number, widt
   ctx.restore();
 }
 
+export function drawLaurelWreath(ctx: SKRSContext2D, cx: number, cy: number, r: number): void {
+  ctx.save();
+  ctx.strokeStyle = '#F0ABFC';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, Math.PI * 0.3, Math.PI * 1.15, true);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, Math.PI * 0.7, -Math.PI * 0.15, false);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function drawVectorTrophy(ctx: SKRSContext2D, cx: number, cy: number, size: number, fillColor = '#F3E8FF', strokeColor = '#9333EA'): void {
+  ctx.save();
+  ctx.fillStyle = fillColor;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(cx - size * 0.4, cy - size * 0.4);
+  ctx.lineTo(cx + size * 0.4, cy - size * 0.4);
+  ctx.lineTo(cx + size * 0.26, cy + size * 0.06);
+  ctx.quadraticCurveTo(cx, cy + size * 0.35, cx - size * 0.26, cy + size * 0.06);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillRect(cx - 3, cy + size * 0.25, 6, size * 0.22);
+  rr(ctx, cx - size * 0.28, cy + size * 0.46, size * 0.56, size * 0.14, 3, fillColor, strokeColor, 1.8);
+  ctx.restore();
+}
+
+export function drawVectorClock(ctx: SKRSContext2D, cx: number, cy: number, radius: number, strokeColor = '#F3E8FF'): void {
+  ctx.save();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  line(ctx, cx, cy, cx, cy - radius * 0.55, strokeColor, 2.2);
+  line(ctx, cx, cy, cx + radius * 0.45, cy + radius * 0.1, strokeColor, 2.2);
+  ctx.restore();
+}
+
+export function drawVectorSpeedo(ctx: SKRSContext2D, cx: number, cy: number, radius: number, strokeColor = '#F3E8FF'): void {
+  ctx.save();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, Math.PI, 0);
+  ctx.stroke();
+  line(ctx, cx, cy, cx + radius * 0.52, cy - radius * 0.42, '#F472B6', 2.5);
+  ctx.restore();
+}
+
+export function drawVectorPieChart(ctx: SKRSContext2D, cx: number, cy: number, radius: number, percentage: number): void {
+  const pct = Math.max(0, Math.min(100, safeNum(percentage, 0)));
+  ctx.save();
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = 'rgba(56, 18, 82, 0.85)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (pct > 0) {
+    const g = ctx.createLinearGradient(cx - radius, cy, cx + radius, cy);
+    g.addColorStop(0, '#D946EF');
+    g.addColorStop(1, '#38BDF8');
+    ctx.strokeStyle = g;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * pct) / 100);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export const drawVectorDonut = drawVectorPieChart;
+
+export function drawVectorBars(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, color = '#D946EF'): void {
+  const bw = w / 5;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y + h * 0.55, bw, h * 0.45);
+  ctx.fillRect(x + bw * 1.5, y + h * 0.35, bw, h * 0.65);
+  ctx.fillRect(x + bw * 3, y + h * 0.1, bw, h * 0.9);
+  ctx.restore();
+}
+
+export function drawVectorPickaxe(ctx: SKRSContext2D, cx: number, cy: number, size: number): void {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-0.55);
+  line(ctx, 0, -size * 0.35, 0, size * 0.4, '#C084FC', 3.5);
+  ctx.strokeStyle = '#F5D0FE';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.3, size * 0.4, Math.PI * 1.1, Math.PI * 1.9);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function drawVectorHeart(ctx: SKRSContext2D, cx: number, cy: number, size: number, color = '#F472B6'): void {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + size * 0.35);
+  ctx.bezierCurveTo(cx - size * 0.62, cy - size * 0.08, cx - size * 0.52, cy - size * 0.52, cx, cy - size * 0.18);
+  ctx.bezierCurveTo(cx + size * 0.52, cy - size * 0.52, cx + size * 0.62, cy - size * 0.08, cx, cy + size * 0.35);
+  ctx.fill();
+  ctx.restore();
+}
+
+export function drawGamePanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, radius = 20, fillColor = '#251036', bevelColor = '#0C0413', bevelHeight = 6, strokeColor?: string | null): void {
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.48)';
+  ctx.shadowBlur = 15;
+  ctx.shadowOffsetY = bevelHeight;
+  rr(ctx, x, y + bevelHeight, w, h, radius, bevelColor);
+  ctx.restore();
+  rr(ctx, x, y, w, h, radius, fillColor, strokeColor ?? '#A855F7', 2);
+}
+
+export function drawRibbonBanner(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, title: string, sub: string, angle = 0): void {
+  ctx.save();
+  ctx.translate(x + w / 2, y + h / 2);
+  ctx.rotate(angle);
+  ctx.translate(-w / 2, -h / 2);
+  drawGamePanel(ctx, 0, 0, w, h, 16, '#35104C', '#11061A', 6, '#D946EF');
+  drawVectorCrown(ctx, w / 2, 18, 28);
+  txt(ctx, title, w / 2, 48, 25, '#FFFFFF', true, 'center');
+  caps(ctx, sub, w / 2, 67, 9, '#E9D5FF', 'center', 1.4);
+  ctx.restore();
+}
+
+export function drawWoodenPlank(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, text: string, angle = 0): void {
+  ctx.save();
+  ctx.translate(x + w / 2, y + h / 2);
+  ctx.rotate(angle);
+  ctx.translate(-w / 2, -h / 2);
+  drawGamePanel(ctx, 0, 0, w, h, 12, '#32104A', '#09020F', 6, '#D946EF');
+  txt(ctx, text, w / 2, h / 2 + 7, fitText(ctx, text, w - 20, 16), '#FFF8FF', true, 'center');
+  ctx.restore();
+}
+
+export function drawHangingBanner(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, title: string, lines: string[], angle = 0): void {
+  ctx.save();
+  ctx.translate(x + w / 2, y);
+  ctx.rotate(angle);
+  ctx.translate(-w / 2, 0);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(w, 0);
+  ctx.lineTo(w, h - 16);
+  ctx.lineTo(w / 2, h + 12);
+  ctx.lineTo(0, h - 16);
+  ctx.closePath();
+  ctx.fillStyle = '#32104A';
+  ctx.fill();
+  ctx.strokeStyle = '#D946EF';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  txt(ctx, title, w / 2, 26, 15, '#FFFFFF', true, 'center');
+  lines.slice(0, 4).forEach((s, i) => txt(ctx, s, w / 2, 50 + i * 16, 11, '#E9D5FF', false, 'center'));
+  ctx.restore();
+}
+
+export function drawChunkyGamePanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r = 18, bgGradTop = '#381151', bgGradBot = '#1A0827', bevelColor = '#09020F', bevelDepth = 6): void {
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.5)';
+  ctx.shadowBlur = 14;
+  ctx.shadowOffsetY = bevelDepth;
+  rr(ctx, x, y + bevelDepth, w, h, r, bevelColor);
+  ctx.restore();
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, bgGradTop);
+  g.addColorStop(1, bgGradBot);
+  rr(ctx, x, y, w, h, r, g, '#A855F7', 2);
+}
+
+export function drawCreamTile(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r = 16): void {
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, '#FFF8FF');
+  g.addColorStop(1, '#E9D5FF');
+  rr(ctx, x, y, w, h, r, g, '#A855F7', 2);
+}
+
 function drawProceduralCrystal(ctx: SKRSContext2D, cx: number, cy: number, size: number, color1 = '#E879F9', color2 = '#818CF8'): void {
   ctx.save();
   ctx.translate(cx, cy);
@@ -295,7 +554,6 @@ function drawProceduralCrystal(ctx: SKRSContext2D, cx: number, cy: number, size:
   ctx.shadowColor = color1;
   ctx.shadowBlur = 14;
 
-  // Left facet
   ctx.beginPath();
   ctx.moveTo(0, -h / 2);
   ctx.lineTo(-w, 0);
@@ -304,7 +562,6 @@ function drawProceduralCrystal(ctx: SKRSContext2D, cx: number, cy: number, size:
   ctx.fillStyle = color1;
   ctx.fill();
 
-  // Right facet
   ctx.beginPath();
   ctx.moveTo(0, -h / 2);
   ctx.lineTo(w, 0);
@@ -313,7 +570,6 @@ function drawProceduralCrystal(ctx: SKRSContext2D, cx: number, cy: number, size:
   ctx.fillStyle = color2;
   ctx.fill();
 
-  // Center specular line
   ctx.strokeStyle = '#FFFFFF';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
@@ -323,33 +579,26 @@ function drawProceduralCrystal(ctx: SKRSContext2D, cx: number, cy: number, size:
   ctx.restore();
 }
 
-/**
- * Pet Simulator 99 Iconic Block Pet: Crystal Cat
- */
 function drawPetCat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): void {
   ctx.save();
   ctx.translate(cx, cy);
   const s = size;
 
-  // Shadow
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.beginPath();
   ctx.ellipse(0, s * 0.52, s * 0.48, s * 0.16, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Ears
-  const earW = s * 0.28, earH = s * 0.32;
   ctx.fillStyle = '#C084FC';
   ctx.strokeStyle = '#581C87';
   ctx.lineWidth = 3;
-  // Left ear
   ctx.beginPath();
   ctx.moveTo(-s * 0.4, -s * 0.3);
   ctx.lineTo(-s * 0.25, -s * 0.6);
   ctx.lineTo(-s * 0.1, -s * 0.35);
   ctx.closePath();
   ctx.fill(); ctx.stroke();
-  // Right ear
+
   ctx.beginPath();
   ctx.moveTo(s * 0.4, -s * 0.3);
   ctx.lineTo(s * 0.25, -s * 0.6);
@@ -357,7 +606,6 @@ function drawPetCat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): voi
   ctx.closePath();
   ctx.fill(); ctx.stroke();
 
-  // Inner ears
   ctx.fillStyle = '#F472B6';
   ctx.beginPath();
   ctx.moveTo(-s * 0.35, -s * 0.32);
@@ -373,27 +621,23 @@ function drawPetCat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): voi
   ctx.closePath();
   ctx.fill();
 
-  // Sześcienne ciało (Block Head)
   const g = ctx.createLinearGradient(0, -s * 0.45, 0, s * 0.45);
   g.addColorStop(0, '#E879F9');
   g.addColorStop(1, '#7E22CE');
   rr(ctx, -s * 0.45, -s * 0.45, s * 0.9, s * 0.9, s * 0.24, g, '#3B0764', 3.5);
 
-  // Big Shiny Eyes
   const eyeR = s * 0.12;
   [-s * 0.22, s * 0.22].forEach(ex => {
     ctx.fillStyle = '#1E1B4B';
     ctx.beginPath();
     ctx.arc(ex, -s * 0.05, eyeR, 0, Math.PI * 2);
     ctx.fill();
-    // Catchlight
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
     ctx.arc(ex - eyeR * 0.3, -s * 0.05 - eyeR * 0.3, eyeR * 0.45, 0, Math.PI * 2);
     ctx.fill();
   });
 
-  // Pink Nose & Cat Mouth :3
   ctx.fillStyle = '#F472B6';
   ctx.beginPath();
   ctx.arc(0, s * 0.1, s * 0.045, 0, Math.PI * 2);
@@ -409,37 +653,30 @@ function drawPetCat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): voi
   ctx.arc(s * 0.06, s * 0.18, s * 0.06, 0.1, Math.PI * 0.8);
   ctx.stroke();
 
-  // Forehead Gem
   drawProceduralCrystal(ctx, 0, -s * 0.26, s * 0.22, '#38BDF8', '#818CF8');
   ctx.restore();
 }
 
-/**
- * Pet Simulator 99 Block Pet: Demon Bat
- */
 function drawPetBat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): void {
   ctx.save();
   ctx.translate(cx, cy);
   const s = size;
 
-  // Shadow
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.beginPath();
   ctx.ellipse(0, s * 0.52, s * 0.48, s * 0.16, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Bat Wings
   ctx.fillStyle = '#311042';
   ctx.strokeStyle = '#A855F7';
   ctx.lineWidth = 2.5;
-  // Left Wing
   ctx.beginPath();
   ctx.moveTo(-s * 0.4, 0);
   ctx.quadraticCurveTo(-s * 0.8, -s * 0.4, -s * 0.85, -s * 0.1);
   ctx.quadraticCurveTo(-s * 0.7, s * 0.2, -s * 0.4, s * 0.25);
   ctx.closePath();
   ctx.fill(); ctx.stroke();
-  // Right Wing
+
   ctx.beginPath();
   ctx.moveTo(s * 0.4, 0);
   ctx.quadraticCurveTo(s * 0.8, -s * 0.4, s * 0.85, -s * 0.1);
@@ -447,13 +684,11 @@ function drawPetBat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): voi
   ctx.closePath();
   ctx.fill(); ctx.stroke();
 
-  // Body
   const g = ctx.createLinearGradient(0, -s * 0.45, 0, s * 0.45);
   g.addColorStop(0, '#4C1D95');
   g.addColorStop(1, '#1E0B38');
   rr(ctx, -s * 0.42, -s * 0.42, s * 0.84, s * 0.84, s * 0.22, g, '#A855F7', 3);
 
-  // Glowing Cyan Demon Eyes
   const eyeR = s * 0.11;
   [-s * 0.2, s * 0.2].forEach(ex => {
     ctx.shadowColor = '#38BDF8';
@@ -469,7 +704,6 @@ function drawPetBat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): voi
   });
   ctx.shadowBlur = 0;
 
-  // Little vampire fangs
   ctx.fillStyle = '#FFFFFF';
   ctx.beginPath();
   ctx.moveTo(-s * 0.1, s * 0.16);
@@ -487,15 +721,11 @@ function drawPetBat(ctx: SKRSContext2D, cx: number, cy: number, size = 110): voi
   ctx.restore();
 }
 
-/**
- * Pet Simulator 99 Block Pet: Angel Wisp with Halo
- */
 function drawPetAngel(ctx: SKRSContext2D, cx: number, cy: number, size = 95): void {
   ctx.save();
   ctx.translate(cx, cy);
   const s = size;
 
-  // Floating Golden Halo
   ctx.strokeStyle = '#FBBF24';
   ctx.lineWidth = 4;
   ctx.shadowColor = '#FBBF24';
@@ -505,18 +735,16 @@ function drawPetAngel(ctx: SKRSContext2D, cx: number, cy: number, size = 95): vo
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // Angelic Wings
   ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
   ctx.strokeStyle = '#F0ABFC';
   ctx.lineWidth = 2;
-  // Left Wing
   ctx.beginPath();
   ctx.moveTo(-s * 0.35, -s * 0.1);
   ctx.quadraticCurveTo(-s * 0.75, -s * 0.5, -s * 0.7, 0);
   ctx.quadraticCurveTo(-s * 0.55, s * 0.3, -s * 0.35, s * 0.15);
   ctx.closePath();
   ctx.fill(); ctx.stroke();
-  // Right Wing
+
   ctx.beginPath();
   ctx.moveTo(s * 0.35, -s * 0.1);
   ctx.quadraticCurveTo(s * 0.75, -s * 0.5, s * 0.7, 0);
@@ -524,14 +752,12 @@ function drawPetAngel(ctx: SKRSContext2D, cx: number, cy: number, size = 95): vo
   ctx.closePath();
   ctx.fill(); ctx.stroke();
 
-  // Pearlescent Body
   const g = ctx.createLinearGradient(0, -s * 0.4, 0, s * 0.4);
   g.addColorStop(0, '#FFFFFF');
   g.addColorStop(0.5, '#F5D0FE');
   g.addColorStop(1, '#D8B4FE');
   rr(ctx, -s * 0.38, -s * 0.38, s * 0.76, s * 0.76, s * 0.22, g, '#C084FC', 3);
 
-  // Cute closed smiling eyes
   ctx.strokeStyle = '#6B21A8';
   ctx.lineWidth = 3;
   ctx.lineCap = 'round';
@@ -541,7 +767,6 @@ function drawPetAngel(ctx: SKRSContext2D, cx: number, cy: number, size = 95): vo
     ctx.stroke();
   });
 
-  // Rosy Cheeks
   ctx.fillStyle = 'rgba(244, 114, 182, 0.5)';
   ctx.beginPath();
   ctx.arc(-s * 0.22, s * 0.1, s * 0.06, 0, Math.PI * 2);
@@ -550,12 +775,8 @@ function drawPetAngel(ctx: SKRSContext2D, cx: number, cy: number, size = 95): vo
   ctx.restore();
 }
 
-/**
- * 3D Isometric Floating Rune Pedestal (Centerpiece)
- */
 function drawFloatingPedestal(ctx: SKRSContext2D, cx: number, cy: number, w = 500, h = 130): void {
   ctx.save();
-  // Ambient glow beneath
   const bgGlow = ctx.createRadialGradient(cx, cy + 30, 20, cx, cy + 30, w * 0.55);
   bgGlow.addColorStop(0, 'rgba(217, 70, 239, 0.7)');
   bgGlow.addColorStop(0.5, 'rgba(147, 51, 234, 0.25)');
@@ -565,29 +786,23 @@ function drawFloatingPedestal(ctx: SKRSContext2D, cx: number, cy: number, w = 50
   ctx.ellipse(cx, cy + 30, w * 0.55, h * 0.45, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Floating Runic Outer Ring
   ctx.strokeStyle = 'rgba(244, 114, 182, 0.6)';
   ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.ellipse(cx, cy + 15, w * 0.52, h * 0.35, 0, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Pedestal Lower Bevel (3D depth)
+  // Direct vector coordinates — eliminating TS2532 array indexing
   const bevelH = 34;
-  const polyLower: [number, number][] = [
-    [cx - w * 0.42, cy],
-    [cx + w * 0.42, cy],
-    [cx + w * 0.38, cy + bevelH],
-    [cx - w * 0.38, cy + bevelH],
-  ];
   ctx.fillStyle = '#1A062E';
   ctx.beginPath();
-  ctx.moveTo(polyLower[0][0], polyLower[0][1]);
-  polyLower.forEach(p => ctx.lineTo(p[0], p[1]));
+  ctx.moveTo(cx - w * 0.42, cy);
+  ctx.lineTo(cx + w * 0.42, cy);
+  ctx.lineTo(cx + w * 0.38, cy + bevelH);
+  ctx.lineTo(cx - w * 0.38, cy + bevelH);
   ctx.closePath();
   ctx.fill();
 
-  // Pedestal Top Surface (Glowing crystal slab)
   const topGrad = ctx.createLinearGradient(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
   topGrad.addColorStop(0, '#581C87');
   topGrad.addColorStop(0.5, '#3B0764');
@@ -600,14 +815,12 @@ function drawFloatingPedestal(ctx: SKRSContext2D, cx: number, cy: number, w = 50
   ctx.fill();
   ctx.stroke();
 
-  // Inner Rune Circle
   ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
   ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.ellipse(cx, cy, w * 0.28, h * 0.16, 0, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Flanking Procedural Crystal Clusters
   drawProceduralCrystal(ctx, cx - w * 0.4, cy - 10, 48, '#E879F9', '#38BDF8');
   drawProceduralCrystal(ctx, cx - w * 0.35, cy + 10, 32, '#F472B6', '#C084FC');
   drawProceduralCrystal(ctx, cx + w * 0.4, cy - 10, 48, '#38BDF8', '#E879F9');
@@ -717,10 +930,8 @@ function drawStage(ctx: SKRSContext2D, x: number, y: number, w: number, h: numbe
   const cx = x + w / 2;
   const cy = y + h / 2 + 10;
 
-  // 1. Procedural 3D Pedestal
   drawFloatingPedestal(ctx, cx, cy + 50, 480, 130);
 
-  // 2. Avatar on Platform
   if (avatar) {
     ctx.save();
     ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
@@ -728,19 +939,16 @@ function drawStage(ctx: SKRSContext2D, x: number, y: number, w: number, h: numbe
     ctx.shadowOffsetY = 10;
     const avS = 250;
     const dw = Math.min(avS, avS * (avatar.width / avatar.height));
-    const dh = avS;
-    ctx.drawImage(avatar, cx - dw / 2, cy - 145, dw, dh);
+    ctx.drawImage(avatar, cx - dw / 2, cy - 145, dw, avS);
     ctx.restore();
   } else {
     drawVectorCrown(ctx, cx, cy - 40, 90, '#FBBF24', '#B45309');
   }
 
-  // 3. Companion Block Pets flanking the player
   drawPetCat(ctx, cx - 180, cy + 25, 115);
   drawPetBat(ctx, cx + 180, cy + 25, 115);
   drawPetAngel(ctx, cx + 185, cy - 110, 95);
 
-  // 4. Stage Status Badge
   rr(ctx, cx - 85, cy + 96, 170, 36, 18, '#3B0764', '#F472B6', 2);
   drawVectorCrown(ctx, cx - 55, cy + 114, 16, '#FBBF24', '#D97706');
   caps(ctx, rank ? `RANK #${rank}` : 'TOP ROSTER', cx + 14, cy + 118, 10, '#FFFFFF', 'center', 1.6);
@@ -749,7 +957,6 @@ function drawStage(ctx: SKRSContext2D, x: number, y: number, w: number, h: numbe
 function drawPlayerCardPanel(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, title: string, tag: string, rank: number | null, consistency: number | null, avatar: Image | null): void {
   drawCartoonCard(ctx, x, y, w, h);
 
-  // Circular Mini Avatar Thumbnail
   const avR = 38, avCx = x + 54, avCy = y + h / 2 - 8;
   ctx.save();
   ctx.beginPath();
@@ -777,7 +984,6 @@ function drawPlayerCardPanel(ctx: SKRSContext2D, x: number, y: number, w: number
   txt(ctx, cleanName, tx, y + 54, fitText(ctx, cleanName, w - 130, 26), '#FFFFFF', true);
   caps(ctx, `@${cleanName.toLowerCase().replace(/\s+/g, '')} • [${tag || 'R3V0'}]`, tx, y + 78, 11, '#D8B4FE', 'left', 1.4);
 
-  // Session Tempo Progress Bar
   const actVal = Math.max(0.1, Math.min(1, consistency ?? 0.85));
   const barW = w - 135, barY = y + 112;
   caps(ctx, 'SESSION TEMPO', tx, barY - 6, 9, C.textDim, 'left', 1.8);
@@ -805,7 +1011,6 @@ function drawClanPositionPanel(ctx: SKRSContext2D, x: number, y: number, w: numb
   drawVectorCrown(ctx, x + 36, y + 34, 20, '#FFFFFF', C.panelGlow);
   caps(ctx, 'CLAN POSITION', x + 58, y + 42, 14, '#FFFFFF', 'left', 2.0);
 
-  // Rank emblem
   const rCx = x + 76, rCy = y + 114;
   ctx.strokeStyle = '#F0ABFC';
   ctx.lineWidth = 3;
@@ -828,7 +1033,6 @@ function drawContributionPanel(ctx: SKRSContext2D, x: number, y: number, w: numb
   drawVectorStar(ctx, x + 34, y + 36, 11, '#FFFFFF', C.accentCyan, 2);
   caps(ctx, 'CLAN SHARE', x + 56, y + 42, 14, '#FFFFFF', 'left', 2.0);
 
-  // Donut Gauge
   const pct = Math.max(0, Math.min(100, share ?? 14));
   const cx = x + 66, cy = y + 116, rad = 34;
   ctx.lineWidth = 10;
@@ -985,11 +1189,12 @@ function drawPerformancePanel(ctx: SKRSContext2D, x: number, y: number, w: numbe
 }
 
 // ============================================================================
-// PROCEDURAL BACKGROUND (NO LOCAL PNG REQUIRED)
+// PROCEDURAL BACKGROUND (NO EXTERNAL ASSETS)
 // ============================================================================
 
+interface StarCoord { x: number; y: number; r: number }
+
 function drawProceduralSpaceBackground(ctx: SKRSContext2D, w: number, h: number): void {
-  // Deep space base
   const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
   bgGrad.addColorStop(0, '#0E0220');
   bgGrad.addColorStop(0.5, '#070110');
@@ -997,7 +1202,6 @@ function drawProceduralSpaceBackground(ctx: SKRSContext2D, w: number, h: number)
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, w, h);
 
-  // Vibrant cosmic nebulas
   const n1 = ctx.createRadialGradient(w * 0.2, h * 0.3, 50, w * 0.2, h * 0.3, 500);
   n1.addColorStop(0, 'rgba(147, 51, 234, 0.22)');
   n1.addColorStop(1, 'rgba(0, 0, 0, 0)');
@@ -1010,23 +1214,35 @@ function drawProceduralSpaceBackground(ctx: SKRSContext2D, w: number, h: number)
   ctx.fillStyle = n2;
   ctx.fillRect(0, 0, w, h);
 
-  // Twinkling stars
-  const starCoords = [
-    [100, 80, 2], [240, 150, 1.5], [420, 70, 3], [750, 110, 2], [920, 60, 2.5],
-    [1200, 90, 1.8], [1450, 130, 3], [1520, 240, 1.5], [80, 450, 2], [1500, 520, 2.2],
-    [120, 780, 2.5], [1480, 820, 2], [800, 950, 1.8], [600, 50, 2], [1350, 40, 2.5]
+  // Explicit Star Coordinates (Strict typing — eliminating TS2345)
+  const starCoords: readonly StarCoord[] = [
+    { x: 100, y: 80, r: 2 },
+    { x: 240, y: 150, r: 1.5 },
+    { x: 420, y: 70, r: 3 },
+    { x: 750, y: 110, r: 2 },
+    { x: 920, y: 60, r: 2.5 },
+    { x: 1200, y: 90, r: 1.8 },
+    { x: 1450, y: 130, r: 3 },
+    { x: 1520, y: 240, r: 1.5 },
+    { x: 80, y: 450, r: 2 },
+    { x: 1500, y: 520, r: 2.2 },
+    { x: 120, y: 780, r: 2.5 },
+    { x: 1480, y: 820, r: 2 },
+    { x: 800, y: 950, r: 1.8 },
+    { x: 600, y: 50, r: 2 },
+    { x: 1350, y: 40, r: 2.5 },
   ];
-  starCoords.forEach(([sx, sy, sr]) => {
+
+  for (const s of starCoords) {
     ctx.fillStyle = '#FFFFFF';
     ctx.shadowColor = '#F472B6';
     ctx.shadowBlur = 6;
     ctx.beginPath();
-    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
     ctx.fill();
-  });
+  }
   ctx.shadowBlur = 0;
 
-  // Dark edge vignette
   const vignette = ctx.createRadialGradient(w / 2, h / 2, 300, w / 2, h / 2, Math.max(w, h) * 0.72);
   vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
   vignette.addColorStop(1, 'rgba(3, 0, 8, 0.85)');
@@ -1070,11 +1286,8 @@ export async function renderHistory(
 
   const avatar = await playerImage(validId(userId) ?? idFromAvatarUrl(avatarUrl), avatarUrl, options.avatarRenderUrl);
 
-  // 1. Procedural Background
   drawProceduralSpaceBackground(ctx, w, h);
 
-  // 2. Header
-  // Procedural Logo Badge
   rr(ctx, 40, 22, 90, 80, 18, '#3B0764', '#D946EF', 2.5);
   drawVectorCrown(ctx, 85, 58, 38, '#FBBF24', '#B45309');
   txt(ctx, 'R3V0', 145, 64, 48, '#FFFFFF', true);
@@ -1090,7 +1303,6 @@ export async function renderHistory(
   caps(ctx, meta.event, w - 40, 94, 11, '#E9D5FF', 'right', 1.6);
   caps(ctx, meta.tag ? `CLAN [${meta.tag}]` : '[R3V0 CLAN]', w - 40, 112, 9, C.textDim, 'right', 1.4);
 
-  // 3. Stats calculation
   const tf = getTimeframeConfig(selectedTimeframe);
   const now = options.now ?? Date.now();
   const series = historySeries(stats?.points, tf.totalMs, tf.buckets, now);
@@ -1111,7 +1323,6 @@ export async function renderHistory(
   const share = clanTotal && clanTotal > 0 && userPoints !== null ? Math.min(100, Math.max(0, (userPoints / clanTotal) * 100)) : null;
   const lead = rivalry?.behind && num(rivalry.behind.lead) !== null ? num(rivalry.behind.lead) : null;
 
-  // 4. Middle Stage & Side Cards (Symmetrical Grid: 420px | 640px | 420px)
   drawPlayerCardPanel(ctx, 40, 125, 420, 205, title, meta.tag, rank, consistency, avatar);
   drawCurrentStarsPanel(ctx, 40, 350, 420, 205, current);
 
@@ -1120,11 +1331,9 @@ export async function renderHistory(
   drawClanPositionPanel(ctx, 1140, 125, 420, 205, rank, members, lead);
   drawContributionPanel(ctx, 1140, 350, 420, 205, userPoints, clanTotal, share);
 
-  // 5. Bottom Section
   drawContributionHistoryChart(ctx, 40, 575, 1040, 370, series);
   drawPerformancePanel(ctx, 1100, 575, 460, 370, gain, average, best, pace);
 
-  // 6. Footer
   caps(ctx, 'R3V0 INTELLIGENCE • PURE VECTOR GRAPHICS ENGINE', 45, 980, 9, C.textDim, 'left', 1.8);
   caps(ctx, 'PET SIMULATOR 99 • ULTRA-HD 4K RENDER', w - 45, 980, 9, C.textDim, 'right', 1.8);
 
@@ -1151,14 +1360,11 @@ export async function renderPlayerCard(
 
   drawProceduralSpaceBackground(ctx, w, h);
 
-  // Logo
   rr(ctx, w / 2 - 40, 24, 80, 70, 16, '#3B0764', '#D946EF', 2);
   drawVectorCrown(ctx, w / 2, 54, 34, '#FBBF24', '#B45309');
 
-  // Main Card
   drawCartoonCard(ctx, 35, 115, 570, 700, 24);
 
-  // Pedestal & Avatar
   drawFloatingPedestal(ctx, w / 2, 380, 380, 110);
   drawPetCat(ctx, 95, 340, 100);
   drawPetBat(ctx, w - 95, 340, 100);
@@ -1203,13 +1409,11 @@ export async function renderRap(r: RapResult): Promise<Buffer> {
   registerOptionalFonts();
   drawProceduralSpaceBackground(ctx, w, h);
 
-  // Header
   rr(ctx, 40, 20, 90, 75, 16, '#3B0764', '#D946EF', 2);
   drawVectorCrown(ctx, 85, 54, 34, '#FBBF24', '#B45309');
   txt(ctx, 'RAP TRACKER', 150, 60, 36, '#FFFFFF', true);
   caps(ctx, 'PET VALUATION & MARKET INTELLIGENCE', 152, 84, 10, C.textMuted, 'left', 2.0);
 
-  // Left Item Preview Card
   drawCartoonCard(ctx, 40, 115, 350, 525, 24);
   const img = await loadRemote(r.imageUrl);
   if (img) {
@@ -1223,7 +1427,6 @@ export async function renderRap(r: RapResult): Promise<Buffer> {
   txt(ctx, r.name, 215, 470, fitText(ctx, r.name, 310, 28), '#FFFFFF', true, 'center');
   caps(ctx, 'TARGET ITEM', 215, 498, 9, C.textDim, 'center', 1.8);
 
-  // Right Variants Card
   drawCartoonCard(ctx, 410, 115, 750, 525, 24);
   txt(ctx, 'MARKET VARIANTS', 445, 162, 24, '#FFFFFF', true);
 

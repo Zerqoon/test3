@@ -7,7 +7,8 @@ import {
   EmbedBuilder,
   PermissionFlagsBits,
   type ChatInputCommandInteraction,
-  type InteractionEditReplyOptions
+  type InteractionEditReplyOptions,
+  type ButtonInteraction
 } from 'discord.js';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -34,7 +35,7 @@ import { compact } from '../canvas/primitives.js';
 import { masteryService } from '../services/MasteryService.js';
 import type { ClanMember, ClanRecord } from '../types.js';
 
-const defaultClan = () => settingsRepo.get('main_clan') ?? config.MAIN_CLAN;
+const defaultClan = (): string => settingsRepo.get('main_clan') ?? config.MAIN_CLAN;
 
 function getLogoAttachment(): AttachmentBuilder | null {
   const logoPath = resolve(process.cwd(), 'assets/branding/r3v0-logo.png');
@@ -64,7 +65,7 @@ function historyEmbed(
   delta24h: number,
   deltaPct24h: number,
   hasLogo = false
-) {
+): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(0x7B2CBF)
     .setTitle(`📈 ${title}`)
@@ -98,15 +99,17 @@ async function handleInteractivePlayerHistory(
   ctx.history.captureClan(liveClan);
   let selectedTf: TimeframeMode = '24h';
 
-  // 1. Sortowanie członków klanu pod kątem drabinki klanowej
-  const sortedMembers = [...liveClan.members].sort((a, b) => (b.battlePoints ?? 0) - (a.battlePoints ?? 0));
-  const memberIdx = sortedMembers.findIndex(m => m.userId === resolvedUser.id);
+  // 1. Sortowanie członków klanu z jawnymi typami
+  const sortedMembers: ClanMember[] = [...liveClan.members].sort(
+    (a: ClanMember, b: ClanMember) => (b.battlePoints ?? 0) - (a.battlePoints ?? 0)
+  );
+  const memberIdx = sortedMembers.findIndex((m: ClanMember) => m.userId === resolvedUser.id);
   const rankNum = memberIdx !== -1 ? memberIdx + 1 : 1;
   const totalMembers = sortedMembers.length || 1;
 
   // 2. Rywal wyżej (Ahead) i niżej (Behind)
-  const aheadMember = memberIdx > 0 ? sortedMembers[memberIdx - 1] : null;
-  const behindMember = memberIdx < totalMembers - 1 ? sortedMembers[memberIdx + 1] : null;
+  const aheadMember: ClanMember | null = memberIdx > 0 ? (sortedMembers[memberIdx - 1] ?? null) : null;
+  const behindMember: ClanMember | null = memberIdx < totalMembers - 1 ? (sortedMembers[memberIdx + 1] ?? null) : null;
 
   const aheadUser = aheadMember ? playerRepo.get(aheadMember.userId) : null;
   const behindUser = behindMember ? playerRepo.get(behindMember.userId) : null;
@@ -114,7 +117,11 @@ async function handleInteractivePlayerHistory(
   const curPts = liveMember?.battlePoints ?? 0;
   const aheadGap = aheadMember ? (aheadMember.battlePoints ?? 0) - curPts : 0;
   const behindLead = behindMember ? curPts - (behindMember.battlePoints ?? 0) : 0;
-  const clanTotalPts = liveClan.battlePoints ?? sortedMembers.reduce((sum, m) => sum + (m.battlePoints ?? 0), 0);
+  
+  const clanTotalPts = liveClan.battlePoints ?? sortedMembers.reduce(
+    (sum: number, m: ClanMember) => sum + (m.battlePoints ?? 0),
+    0
+  );
   const contribPct = clanTotalPts > 0 ? Math.min(100, Math.round((curPts / clanTotalPts) * 100)) : 100;
 
   const rivalryPayload: ClanRivalryInfo = {
@@ -132,7 +139,7 @@ async function handleInteractivePlayerHistory(
     } : null
   };
 
-  const leaderboardPayload = sortedMembers.slice(0, 3).map((entry, index) => {
+  const leaderboardPayload = sortedMembers.slice(0, 3).map((entry: ClanMember, index: number) => {
     const cached = playerRepo.get(entry.userId);
     return {
       rank: index + 1,
@@ -141,12 +148,14 @@ async function handleInteractivePlayerHistory(
     };
   });
 
-  // 3. Generator widoku Embed + PNG + 2 Rzędy Przycisków
+  // 3. Generator widoku Embed + PNG + Przyciski
   const renderTimeframePayload = async (mode: TimeframeMode) => {
     const stats = ctx.history.player(resolvedUser.id, 24, liveClan.battleId);
     const tfConfig = getTimeframeConfig(mode);
-    const buckets = extractBucketsForTimeframe(stats.points ?? [], tfConfig.totalMs, tfConfig.buckets, curPts);
-    const gainInWindow = buckets.reduce((a, b) => a + b, 0);
+    const buckets: number[] = extractBucketsForTimeframe(stats.points ?? [], tfConfig.totalMs, tfConfig.buckets, curPts);
+    
+    // Jawnie otypowane a i b eliminują błąd TS7006
+    const gainInWindow = buckets.reduce((a: number, b: number) => a + b, 0);
     const hoursCount = tfConfig.totalMs / (60 * 60 * 1000);
     const pacePerHour = Math.round(gainInWindow / Math.max(1, hoursCount));
     const bestBucket = Math.max(...buckets, 0);
@@ -164,7 +173,6 @@ async function handleInteractivePlayerHistory(
 
     const attachment = new AttachmentBuilder(png, { name: 'history.png' });
 
-    // Rząd 1: 30m, 1h, 3h (3 elementy <= limit 5 na rząd)
     const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
       (['30m', '1h', '3h'] as TimeframeMode[]).map((tf) =>
         new ButtonBuilder()
@@ -174,7 +182,6 @@ async function handleInteractivePlayerHistory(
       )
     );
 
-    // Rząd 2: 6h, 12h, 24h (3 elementy <= limit 5 na rząd)
     const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
       (['6h', '12h', '24h'] as TimeframeMode[]).map((tf) =>
         new ButtonBuilder()
@@ -184,7 +191,6 @@ async function handleInteractivePlayerHistory(
       )
     );
 
-    // Discord Embed
     const embed = new EmbedBuilder()
       .setColor(0x0F1626)
       .setAuthor({
@@ -247,7 +253,7 @@ async function handleInteractivePlayerHistory(
     time: 180_000
   });
 
-  collector.on('collect', async (btn) => {
+  collector.on('collect', async (btn: ButtonInteraction) => {
     if (btn.user.id !== interaction.user.id) {
       await btn.reply({ content: 'Tylko autor komendy może zmieniać zakres czasu.', ephemeral: true });
       return;
@@ -348,7 +354,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, ct
       if (subcommand === 'leaderboard') {
         const page = interaction.options.getInteger('page') ?? 1;
         const response = await ctx.big.clanLeaderboard(page, 20);
-        const rows = response.data as Array<Record<string, unknown>>;
+        const rows = (response.data as Array<Record<string, unknown>>) ?? [];
 
         const medals = ['🥇', '🥈', '🥉'];
         const formattedRows = rows.map((row, index) => {
@@ -388,7 +394,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, ct
         const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
         const topContributors = clan.members.slice(0, 8);
 
-        const contributorsList = topContributors.map((member, index) => {
+        const contributorsList = topContributors.map((member: ClanMember, index: number) => {
           const medal = medals[index] ?? '▫️';
           const cachedUser = playerRepo.get(member.userId);
           const username = cachedUser ? String(cachedUser.username) : `User_${member.userId}`;
@@ -494,7 +500,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, ct
           time: 120_000
         });
 
-        collector.on('collect', async (btn) => {
+        collector.on('collect', async (btn: ButtonInteraction) => {
           if (btn.user.id !== interaction.user.id) {
             await btn.reply({ content: 'Tylko autor komendy może zmieniać strony.', ephemeral: true });
             return;
@@ -590,7 +596,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, ct
       }
 
       const liveClan = await ctx.whitelist.refresh(resolved.membership.clan_name, false);
-      const liveMember = liveClan.members.find((m) => m.userId === resolved.user.id);
+      const liveMember = liveClan.members.find((m: ClanMember) => m.userId === resolved.user.id);
 
       if (subcommand === 'info') {
         const isOwner = liveMember?.isOwner ?? false;
@@ -614,8 +620,10 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, ct
           embed.setThumbnail('attachment://r3v0-logo.png');
         }
 
-        const sorted = [...liveClan.members].sort((a, b) => (b.battlePoints ?? 0) - (a.battlePoints ?? 0));
-        const playerRankIndex = sorted.findIndex((entry) => entry.userId === resolved.user.id);
+        const sorted: ClanMember[] = [...liveClan.members].sort(
+          (a: ClanMember, b: ClanMember) => (b.battlePoints ?? 0) - (a.battlePoints ?? 0)
+        );
+        const playerRankIndex = sorted.findIndex((entry: ClanMember) => entry.userId === resolved.user.id);
         const playerRank = playerRankIndex >= 0 ? playerRankIndex + 1 : null;
         const roleLabel = isOwner ? 'OWNER / LEADER' : `PERMISSION ${liveMember?.permissionLevel ?? 0}`;
 
@@ -634,7 +642,6 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, ct
         return editSafe(interaction, { embeds: [embed], files: filesToSend });
       }
 
-      // /player history Z OBSŁUGĄ PRZYCISKÓW TIMEFRAME
       if (subcommand === 'history') {
         return await handleInteractivePlayerHistory(interaction, ctx, liveClan, resolved.user, liveMember);
       }
@@ -679,7 +686,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, ct
       }
 
       const clan = await ctx.whitelist.refresh(resolved.membership.clan_name, false);
-      const member = clan.members.find((item) => item.userId === resolved.user.id);
+      const member = clan.members.find((item: ClanMember) => item.userId === resolved.user.id);
       return await handleInteractivePlayerHistory(interaction, ctx, clan, resolved.user, member);
     }
 
@@ -711,7 +718,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, ct
         const resolved = await ctx.player.resolve(input, interaction.options.getString('clan') ?? undefined);
         if (!resolved.membership) throw new Error('Gracz nie został znaleziony w monitorowanych klanach.');
         const clan = await ctx.whitelist.refresh(resolved.membership.clan_name, false);
-        const liveMember = clan.members.find((m) => m.userId === resolved.user.id);
+        const liveMember = clan.members.find((m: ClanMember) => m.userId === resolved.user.id);
         return await handleInteractivePlayerHistory(interaction, ctx, clan, resolved.user, liveMember);
       }
     }

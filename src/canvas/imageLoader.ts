@@ -1,3 +1,0 @@
-import { loadImage } from '@napi-rs/canvas';
-const cache=new Map<string,{img:any,at:number}>();
-export async function loadRemote(url:string|null,timeout=5000,maxBytes=5_000_000):Promise<any|null>{if(!url)return null;const c=cache.get(url);if(c&&Date.now()-c.at<10*60_000)return c.img;const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),timeout);try{const r=await fetch(url,{signal:ctrl.signal});if(!r.ok)return null;const len=Number(r.headers.get('content-length')??0);if(len>maxBytes)return null;const b=Buffer.from(await r.arrayBuffer());if(b.length>maxBytes)return null;const img=await loadImage(b);cache.set(url,{img,at:Date.now()});return img;}catch{return null;}finally{clearTimeout(t);}}

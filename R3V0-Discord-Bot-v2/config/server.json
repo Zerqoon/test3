@@ -1,0 +1,107 @@
+{
+  "brand": {
+    "name": "R3V0",
+    "accent": "#55D8FF",
+    "currency": "Kryształy",
+    "footer": "R3V0 • Społeczność • Administracja"
+  },
+  "roles": {
+    "owner": "1547346866927304704",
+    "moderator": "1547346876246786151",
+    "community": "1547346877429719121",
+    "levels": [
+      {
+        "level": 5,
+        "id": "1549339887361200170",
+        "label": "Nowicjusz"
+      },
+      {
+        "level": 10,
+        "id": "1549339888476758106",
+        "label": "Dostęp do zdjęć"
+      },
+      {
+        "level": 20,
+        "id": "1549339889248763914",
+        "label": "Dostęp do GIF-ów"
+      },
+      {
+        "level": 30,
+        "id": "1549339890259460096",
+        "label": "Weteran"
+      },
+      {
+        "level": 50,
+        "id": "1549339891131744297",
+        "label": "Legenda"
+      }
+    ],
+    "booster": "1555034475447062548",
+    "quarantine": "1555035240215351366"
+  },
+  "channels": {
+    "levels": "1554971115976138864",
+    "generalLogs": "1549346936484794379",
+    "auditLogs": "1549346912723804191",
+    "commands": "1549346772931842169",
+    "verification": "1549342942861459606",
+    "voiceCreate": "1555036112148365393",
+    "voiceCategory": "1555036190527197226"
+  },
+  "leveling": {
+    "enabled": true,
+    "minXp": 10,
+    "maxXp": 16,
+    "cooldownSeconds": 90,
+    "minCharacters": 15,
+    "dailyCap": 1200,
+    "curveQuadratic": 120,
+    "curveLinear": 300,
+    "maxLevel": 100,
+    "ignoredChannels": [],
+    "duplicateWindowSeconds": 21600
+  },
+  "economy": {
+    "workMin": 70,
+    "workMax": 120,
+    "workCooldownMinutes": 60,
+    "dailyBase": 250,
+    "dailyStreakBonus": 25,
+    "dailyMaxStreak": 7,
+    "transferTaxPercent": 3,
+    "maxBalance": 1000000000000
+  },
+  "moderation": {
+    "commandChannelOnly": true,
+    "deleteChatInCommandChannel": true,
+    "mediaGuard": true,
+    "maxPurge": 100,
+    "maxTimeoutMinutes": 40320
+  },
+  "retention": {
+    "messageDays": 7,
+    "maxMessages": 50000,
+    "logDays": 90,
+    "backupCount": 7
+  },
+  "panels": {
+    "rulesTitle": "R3V0 • Regulamin społeczności",
+    "rules": [
+      "Szanuj innych. Obrażanie, nękanie, groźby i dyskryminacja są zabronione.",
+      "Nie publikuj treści NSFW, przemocy ani materiałów naruszających prywatność.",
+      "Nie reklamuj innych serwerów. Zaproszenia Discord, skracacze i próby obchodzenia filtra są usuwane.",
+      "Nie spamuj, nie farm XP i nie nadużywaj oznaczeń. Zdjęcia od poziomu 10, GIF-y od 20.",
+      "GIF-y wysyłaj z dopuszczonych źródeł. W trybie ścisłym wymagają zatwierdzenia Tenor lub filtra GIPHY G.",
+      "Połącz własne konto Roblox przez panel weryfikacji. Nie podawaj nikomu hasła, cookies ani kodów logowania.",
+      "Nowe konta Discord młodsze niż 72 godziny przechodzą 3 dni kwarantanny. Wyjście i powrót nie skraca czasu.",
+      "Na kanałach głosowych obowiązuje kultura. Właściciel prywatnego voice zarządza swoim pokojem.",
+      "Ostrzeżenia obowiązują 30 dni. Progi 3 / 5 / 7 punktów oznaczają timeout 30 min / 6 h / 24 h.",
+      "Kanał komend służy do komend slash. Stosuj się do poleceń administracji i zgłaszaj problemy moderatorom."
+    ],
+    "infoTitle": "Witaj w naszej społeczności",
+    "infoDescription": "Miejsce do rozmów, poznawania ludzi i wspólnej aktywności. Dbaj o dobry klimat i wybieraj kanały zgodnie z ich przeznaczeniem.",
+    "customInfo": "Pomoc: skontaktuj się z Moderatorem lub Ownerem.",
+    "rulesVersion": "2.0",
+    "rulesBanner": "./assets/rules-banner.png"
+  }
+}

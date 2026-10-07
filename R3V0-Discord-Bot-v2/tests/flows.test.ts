@@ -52,6 +52,7 @@ function fixture() {
   const ctx = { db, guild, config: structuredClone(config), client: { user: { id: BOT }, users: { fetch: async (id: string) => ({ send: async () => { dms.push(id); } }) } },
     logger: pino({ level: 'silent' }), stopping: false } as unknown as Context;
   ctx.config.channels.usernames = CHANNEL; ctx.config.history.pageDelayMs = 0;
+  ctx.config.logging.batchWindowMs = 0;
   ctx.logs = new LogService(ctx); ctx.usernames = new UsernameService(ctx); ctx.history = new HistoryService(ctx);
   ctx.giveaways = new GiveawayService(ctx); ctx.moderation = new ModerationService(ctx);
   return { ctx, channel, messages, records, deleted, dms, forced, membership,

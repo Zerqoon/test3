@@ -27,29 +27,28 @@ interface DrawRow {
   giveaway_id: string; round: number; candidate_order: string; candidate_index: number;
   winners_json: string; complete: number; announced_id: string | null; dm_done: number; drawn_at: number;
 }
-export function giveawayModal(draftId: string, values?: DraftValues): ModalBuilder {
+export function giveawayModal(draftId: string, values?: DraftValues, defaultRoleId?: string): ModalBuilder {
   const text = (id: string, label: string, placeholder: string, max: number, value?: string, paragraph = false, required = true) => {
     const input = new TextInputBuilder().setCustomId(id).setStyle(paragraph ? TextInputStyle.Paragraph : TextInputStyle.Short)
       .setPlaceholder(placeholder).setMaxLength(max).setRequired(required);
     if (value) input.setValue(value);
     return new LabelBuilder().setLabel(label).setTextInputComponent(input);
   };
-  const roles = new RoleSelectMenuBuilder().setCustomId('required_role').setMinValues(0).setMaxValues(1)
-    .setRequired(false).setPlaceholder('Optional — choose the required role');
-  if (values?.roleId) roles.setDefaultRoles(values.roleId);
+  const roles = new RoleSelectMenuBuilder().setCustomId('required_role').setMinValues(1).setMaxValues(1)
+    .setRequired(true).setPlaceholder('Choose the required role');
+  if (values?.roleId ?? defaultRoleId) roles.setDefaultRoles((values?.roleId ?? defaultRoleId)!);
   return new ModalBuilder().setCustomId(`goat:giveaway:modal:${draftId}`).setTitle('GOAT • Create Giveaway').addLabelComponents(
     text('title', 'Giveaway Title', 'GOAT Clan Giveaway', 160, values?.title),
     text('prize', 'Prize', 'What will the winner receive?', 240, values?.prize),
     text('duration', 'Duration', '1s / 10s / 1m / 1 minute / 1h 30m', 100, values?.duration),
     text('description', 'Description', 'Details, rules or a note from the host', 1500, values?.description, true, false),
-    new LabelBuilder().setLabel('Required Role').setDescription('Only members with this role can enter. The role will be pinged.').setRoleSelectMenuComponent(roles)
+    new LabelBuilder().setLabel('Required Role').setRoleSelectMenuComponent(roles)
   );
 }
 export function giveawayButtons(id: string, count: number, active: boolean): ActionRowBuilder<ButtonBuilder>[] {
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`goat:giveaway:enter:${id}`).setLabel(active ? `Enter Giveaway • ${count}` : 'Giveaway Closed')
-      .setStyle(active ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🎉').setDisabled(!active),
-    new ButtonBuilder().setCustomId(`goat:giveaway:leave:${id}`).setLabel('Leave Giveaway').setStyle(ButtonStyle.Secondary).setDisabled(!active)
+      .setStyle(active ? ButtonStyle.Success : ButtonStyle.Secondary).setEmoji('🎉').setDisabled(!active)
   )];
 }
 function draftButtons(id: string, publish = true): ActionRowBuilder<ButtonBuilder>[] {
@@ -64,13 +63,16 @@ export class GiveawayService {
   private readonly mutex = new Mutex();
   private busy = false;
   private timer?: NodeJS.Timeout;
-  constructor(private readonly ctx: Context) {}
+  constructor(private readonly ctx: Context) {
+    ctx.db.run("UPDATE giveaways SET role_id=?,dirty=1 WHERE guild_id=? AND role_id IS NULL AND state IN ('active','publishing','ending')", ctx.config.giveaways.defaultRoleId, ctx.guild.id);
+    ctx.db.run("UPDATE giveaways SET dirty=1 WHERE guild_id=? AND state='active'", ctx.guild.id);
+  }
   start(): void { this.timer = setInterval(() => { void this.tick(); }, 500); }
   stop(): void { if (this.timer) clearInterval(this.timer); }
   get(id: string): GiveawayRow {
     const g = this.ctx.db.get<GiveawayRow>('SELECT * FROM giveaways WHERE id=? AND guild_id=?', id, this.ctx.guild.id);
     if (!g) throw new UserError('Giveaway not found. Use /giveaway-list to find its ID.');
-    return g;
+    return { ...g, role_id: g.role_id ?? this.ctx.config.giveaways.defaultRoleId };
   }
   private draft(id: string, userId: string): DraftRow {
     const d = this.ctx.db.get<DraftRow>('SELECT * FROM giveaway_drafts WHERE id=? AND guild_id=? AND owner_id=?', id, this.ctx.guild.id, userId);
@@ -85,7 +87,7 @@ export class GiveawayService {
     this.ctx.db.run('INSERT INTO giveaway_drafts(id,owner_id,guild_id,channel_id,winners,min_messages,period,expires_at) VALUES(?,?,?,?,?,?,?,?)',
       id, interaction.user.id, this.ctx.guild.id, channelId, interaction.options.getInteger('winners') ?? 1,
       interaction.options.getInteger('min-messages') ?? 0, interaction.options.getString('message-period') ?? 'all', Date.now() + 30 * 60_000);
-    await interaction.showModal(giveawayModal(id));
+    await interaction.showModal(giveawayModal(id, undefined, this.ctx.config.giveaways.defaultRoleId));
   }
   async submit(interaction: ModalSubmitInteraction, id: string): Promise<void> {
     const d = this.draft(id, interaction.user.id);
@@ -98,6 +100,7 @@ export class GiveawayService {
     this.ctx.db.run("UPDATE giveaway_drafts SET values_json=?,status='draft',expires_at=? WHERE id=?", JSON.stringify(values), Date.now() + 30 * 60_000, id);
     try {
       if (!values.title || !values.prize) throw new UserError('Title and prize cannot be empty.');
+      if (!roleId) throw new UserError('Choose the required role.');
       values.durationMs = parseDuration(values.duration, this.ctx.config.giveaways.maxDurationDays * 86_400_000);
       await this.validateChannel(d.channel_id, roleId);
       this.ctx.db.run("UPDATE giveaway_drafts SET values_json=?,status='review' WHERE id=?", JSON.stringify(values), id);
@@ -116,7 +119,7 @@ export class GiveawayService {
     const d = this.draft(id, interaction.user.id);
     if (action === 'edit') {
       if (!['draft', 'review'].includes(d.status)) throw new UserError('A published giveaway cannot be edited as a draft.');
-      await interaction.showModal(giveawayModal(id, d.values_json ? JSON.parse(d.values_json) as DraftValues : undefined));
+      await interaction.showModal(giveawayModal(id, d.values_json ? JSON.parse(d.values_json) as DraftValues : undefined, this.ctx.config.giveaways.defaultRoleId));
       return;
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -132,6 +135,7 @@ export class GiveawayService {
       if (!giveawayId) {
         if (fresh.status !== 'review' || !fresh.values_json) throw new UserError('Complete the giveaway form first.');
         const values = JSON.parse(fresh.values_json) as DraftValues;
+        values.roleId ??= this.ctx.config.giveaways.defaultRoleId;
         await this.validateChannel(fresh.channel_id, values.roleId);
         const duration = parseDuration(values.duration, this.ctx.config.giveaways.maxDurationDays * 86_400_000);
         const now = Date.now();
@@ -170,25 +174,29 @@ export class GiveawayService {
   private render(g: GiveawayRow) {
     const closed = g.state === 'ended' || g.state === 'cancelled';
     const embed = goatEmbed(g.state === 'cancelled' ? 'Giveaway Cancelled' : closed ? 'Giveaway Ended' : g.title, closed ? colors.orange : colors.cyan)
-      .setDescription(`**Prize: ${g.prize}**\n\n${g.description || 'Enter below. Good luck, GOAT!'}`)
-      .setImage('attachment://goat-banner.png').addFields({ name: 'Host', value: `<@${g.host_id}>`, inline: true },
-        { name: 'Winners', value: String(g.winners), inline: true }, { name: 'Entries', value: String(this.entries(g.id)), inline: true },
-        { name: closed ? 'Scheduled End' : 'Ends', value: `${stamp(g.ends_at, 'R')}\n${stamp(g.ends_at)}` },
-        { name: 'Entry Requirements', value: `${g.role_id ? `<@&${g.role_id}>` : 'Open to server members'}${g.min_messages ? `\nAt least ${g.min_messages} ${g.period} messages` : ''}` });
+      .setDescription(`**${g.prize}**${g.description ? `\n\n${g.description}` : ''}`)
+      .setImage('attachment://goat-banner.png').addFields({ name: 'Winners', value: String(g.winners), inline: true },
+        { name: closed ? 'Ended' : 'Ends', value: stamp(g.ends_at, 'R'), inline: true },
+        { name: 'Required Role', value: `<@&${g.role_id}>`, inline: true });
+    if (g.min_messages) embed.addFields({ name: 'Messages', value: `${g.min_messages} • ${g.period}`, inline: true });
     if (g.state === 'cancelled') embed.addFields({ name: 'Cancellation Reason', value: clip(g.cancel_reason ?? 'Cancelled by the host', 1000) });
     if (g.state === 'ended') {
       const draw = this.ctx.db.get<DrawRow>('SELECT * FROM giveaway_draws WHERE giveaway_id=? AND complete=1 ORDER BY round DESC LIMIT 1', g.id);
       const winners = draw ? JSON.parse(draw.winners_json) as string[] : [];
       embed.addFields({ name: 'Selected Winners', value: winners.map(id => `<@${id}>`).join(', ') || 'No eligible entries' });
     }
-    return embed.setFooter({ text: `GOAT • Giveaway ID: ${g.id}` });
+    return embed.setFooter({ text: 'GOAT' });
   }
-  private async findMessage(channel: GuildTextBasedChannel, footer: string, since: number): Promise<Message | undefined> {
+  private async findMessage(channel: GuildTextBasedChannel, footer: string, since: number, url?: string, legacyFooter?: string): Promise<Message | undefined> {
     let before: string | undefined;
     for (;;) {
       const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}), cache: false });
       const list = [...page.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp);
-      const found = list.find(m => m.author.id === this.ctx.client.user?.id && m.embeds.some(e => e.footer?.text === footer));
+      const originalId = footer.startsWith('GOAT • Giveaway ID: ') ? footer.slice('GOAT • Giveaway ID: '.length) : undefined;
+      const found = list.find(m => m.author.id === this.ctx.client.user?.id &&
+        (m.embeds.some(e => (e.footer?.text === footer && (!url || e.url === url)) || (!!legacyFooter && e.footer?.text === legacyFooter)) ||
+          (!!originalId && m.components?.some(row => 'components' in row && row.components.some(component =>
+            'customId' in component && component.customId === `goat:giveaway:enter:${originalId}`)))));
       if (found) return found;
       if (!list.length || list.at(-1)!.createdTimestamp < since - 5000) return undefined;
       before = list.at(-1)!.id;
@@ -230,8 +238,10 @@ export class GiveawayService {
       this.ctx.db.run('UPDATE giveaways SET dirty=1 WHERE id=?', id);
       return !!r.changes;
     });
-    await interaction.editReply({ embeds: [goatEmbed(leave ? 'Entry Removed' : 'Entry Confirmed', colors.green)
-      .setDescription(leave ? (changed ? 'You left the giveaway.' : 'You did not have an entry.') : (changed ? 'You are entered. Good luck, GOAT!' : 'You already have an entry. Your chance is unchanged.'))], allowedMentions: noMentions });
+    await interaction.editReply({ content: leave ? (changed ? 'You left the giveaway.' : 'You do not have an entry.') :
+      (changed ? 'You are entered. Good luck!' : 'You are already entered.'), embeds: [],
+      components: leave ? [] : [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder()
+        .setCustomId(`goat:giveaway:leave:${id}`).setLabel('Leave Giveaway').setStyle(ButtonStyle.Secondary))], allowedMentions: noMentions });
   }
   async end(id: string, moderatorId: string): Promise<void> {
     await this.mutex.run(id, async () => {
@@ -296,12 +306,13 @@ export class GiveawayService {
     await this.update(this.get(g.id));
     if (!draw.announced_id) {
       const channel = await this.validateChannel(g.channel_id);
-      const footer = `GOAT • Giveaway ${g.id} • Draw ${draw.round}`;
-      let announcement = await this.findMessage(channel, footer, draw.drawn_at);
+      const footer = `GOAT • Draw ${draw.round}`;
+      const url = `https://discord.com/channels/${g.guild_id}/${g.channel_id}/${g.message_id}`;
+      let announcement = await this.findMessage(channel, footer, draw.drawn_at, url, `GOAT • Giveaway ${g.id} • Draw ${draw.round}`);
       if (!announcement) announcement = await channel.send({ content: winners.length ? winners.map(id => `<@${id}>`).join(' ') : undefined,
         embeds: [goatEmbed(draw.round > 1 ? 'Giveaway Rerolled' : 'Giveaway Winners', winners.length ? colors.green : colors.orange)
           .setDescription(winners.length ? `**${g.title}**\n\nCongratulations ${winners.map(id => `<@${id}>`).join(', ')}!\nYou won **${g.prize}**.` : `**${g.title}**\nNo eligible entries were available. No winner was selected.`)
-          .addFields({ name: 'Host', value: `<@${g.host_id}>` }, { name: 'Giveaway', value: `[Open giveaway](https://discord.com/channels/${g.guild_id}/${g.channel_id}/${g.message_id})` })
+          .setURL(url)
           .setFooter({ text: footer })], allowedMentions: { ...noMentions, users: winners }, nonce: `gw-${g.id}-${draw.round}`, enforceNonce: true });
       this.ctx.db.run('UPDATE giveaway_draws SET announced_id=? WHERE giveaway_id=? AND round=?', announcement.id, g.id, draw.round);
       this.ctx.logs.enqueue({ embeds: [goatEmbed(draw.round > 1 ? 'Giveaway Reroll Complete' : 'Giveaway Ended', colors.green)

@@ -9,6 +9,8 @@ import type { NicknameService } from '../services/nicknames.js';
 import type { GiveawayService } from '../services/giveaways.js';
 import type { ModerationService } from '../services/moderation.js';
 import type { AuditService } from '../services/audit.js';
+import type { MemberService } from '../services/members.js';
+import type { TicketService } from '../services/tickets.js';
 
 export interface AttachmentSnapshot { id: string; url: string; name: string; size: number; contentType: string | null; }
 export interface MessageSnapshot {
@@ -22,5 +24,6 @@ export interface Context {
   client: Client; guild: Guild; config: Config; db: Store; logger: Logger;
   logs: LogService; history: HistoryService; usernames: UsernameService;
   nicknames: NicknameService; giveaways: GiveawayService; moderation: ModerationService; audit: AuditService;
+  members: MemberService; tickets: TicketService;
   startedAt: number; stopping: boolean;
 }

@@ -1,10 +1,11 @@
-import { AuditLogEvent, PermissionsBitField, type GuildAuditLogsEntry } from 'discord.js';
+import { AuditLogEvent, type GuildAuditLogsEntry } from 'discord.js';
 import type { Context } from '../core/types.js';
-import { colors, goatEmbed, logButtons } from '../core/embeds.js';
+import { colors, goatEmbed } from '../core/embeds.js';
 import { clip, errorText, safeText, sleep, stamp } from '../core/util.js';
+import { formatAuditChanges, type AuditChange } from './audit-format.js';
+import { textEvidence } from './logs.js';
 
 type AuditEntry = GuildAuditLogsEntry;
-type Change = { key: string; old?: unknown; new?: unknown };
 const titles = new Map<number, string>([
   [AuditLogEvent.ChannelCreate, 'Channel Created'], [AuditLogEvent.ChannelUpdate, 'Channel Updated'], [AuditLogEvent.ChannelDelete, 'Channel Deleted'],
   [AuditLogEvent.ChannelOverwriteCreate, 'Channel Permissions Added'], [AuditLogEvent.ChannelOverwriteUpdate, 'Channel Permissions Updated'],
@@ -17,15 +18,6 @@ const titles = new Map<number, string>([
 export function changeRoles(value: unknown): string[] {
   return Array.isArray(value) ? value.map(v => typeof v === 'object' && v !== null && 'id' in v ? String(v.id) : '').filter(Boolean) : [];
 }
-function display(value: unknown, key: string): string {
-  if (value === null || value === undefined) return 'Not set';
-  if (['permissions', 'allow', 'deny'].includes(key) && /^\d+$/.test(String(value))) {
-    try { return clip(new PermissionsBitField(BigInt(String(value))).toArray().join(', ') || 'None', 550); } catch { /* Fall through to literal value. */ }
-  }
-  if ((key === '$add' || key === '$remove') && Array.isArray(value)) return changeRoles(value).map(id => `<@&${id}> (\`${id}\`)`).join('\n') || 'None';
-  if (typeof value === 'object') return safeText(JSON.stringify(value, (_, v) => typeof v === 'bigint' ? String(v) : v), 550);
-  return safeText(String(value), 550);
-}
 
 export class AuditService {
   private entries: AuditEntry[] = [];
@@ -34,26 +26,34 @@ export class AuditService {
     this.entries = [entry, ...this.entries.filter(e => e.id !== entry.id)].slice(0, 250);
     const title = titles.get(entry.action);
     if (!title || this.ctx.db.get('SELECT id FROM audit_seen WHERE id=?', entry.id)) return;
+    if (entry.targetId) this.ctx.logs.cancelFallback([entry.action], entry.targetId, entry.createdTimestamp);
+    if (this.ctx.config.logging.ignoreRoutineBotActions && entry.executorId === this.ctx.client.user?.id &&
+      /^(GOAT • (Autorole|Clan nickname|Clan role removed|Ticket|Tickets|Temporary ban)|\[GOAT#)/.test(entry.reason ?? '')) {
+      this.ctx.db.run('INSERT OR IGNORE INTO audit_seen(id,created_at) VALUES(?,?)', entry.id, Date.now());
+      return;
+    }
+    const changes = formatAuditChanges(entry.action, entry.changes as AuditChange[]);
+    if ([AuditLogEvent.RoleUpdate, AuditLogEvent.ChannelUpdate, AuditLogEvent.MemberUpdate, AuditLogEvent.ThreadUpdate].includes(entry.action) && !changes.fields.length && !changes.overflow) return;
     const embed = goatEmbed(title, entry.action === AuditLogEvent.MemberBanAdd ? colors.red : colors.orange);
     const actor = entry.executorId ? `<@${entry.executorId}>\nID: \`${entry.executorId}\`` : 'Unknown — no executor supplied by Discord';
+    const memberAction = [AuditLogEvent.MemberRoleUpdate, AuditLogEvent.MemberUpdate, AuditLogEvent.MemberKick, AuditLogEvent.MemberBanAdd, AuditLogEvent.MemberBanRemove].includes(entry.action);
+    const roleAction = [AuditLogEvent.RoleCreate, AuditLogEvent.RoleUpdate, AuditLogEvent.RoleDelete].includes(entry.action);
+    const targetText = entry.targetId ? `${memberAction ? `<@${entry.targetId}>` : roleAction ? `<@&${entry.targetId}>` : entry.action === AuditLogEvent.GuildUpdate ? 'Server' : `<#${entry.targetId}>`}\nID: \`${entry.targetId}\`` : 'Not supplied';
     embed.addFields({ name: 'Performed By', value: actor, inline: true },
-      { name: 'Target', value: entry.targetId ? `ID: \`${entry.targetId}\`` : 'Not supplied', inline: true },
+      { name: 'Target', value: targetText, inline: true },
       { name: 'Audit Time', value: stamp(entry.createdTimestamp), inline: true });
     const target = entry.target as { name?: string; displayName?: string; username?: string } | null;
     if (target?.name || target?.displayName || target?.username) embed.setDescription(`**${safeText(target.name ?? target.displayName ?? target.username!, 220)}**`);
     if (entry.reason) embed.addFields({ name: 'Reason', value: clip(entry.reason, 700) });
-    let budget = 3600;
-    for (const change of entry.changes as Change[]) {
-      const label = change.key === '$add' ? 'Roles Added' : change.key === '$remove' ? 'Roles Removed' : change.key === 'nick' ? 'Server Nickname' : change.key === 'communication_disabled_until' ? 'Timeout' : change.key.replace(/_/g, ' ');
-      const value = change.key.startsWith('$') ? display(change.new, change.key) : `Before: ${display(change.old, change.key)}\nAfter: ${display(change.new, change.key)}`;
-      if (budget <= 0 || embed.data.fields!.length >= 20) break;
-      const fitted = clip(value, Math.min(900, budget));
-      budget -= fitted.length;
-      embed.addFields({ name: clip(label, 256), value: fitted });
+    if (changes.fields.length) embed.addFields(...changes.fields);
+    const extra = entry.extra as { id?: string; type?: number; count?: number } | null;
+    if ([AuditLogEvent.ChannelOverwriteCreate, AuditLogEvent.ChannelOverwriteUpdate, AuditLogEvent.ChannelOverwriteDelete].includes(entry.action) && extra?.id) {
+      embed.addFields({ name: 'Access For', value: Number(extra.type) === 0 ? `<@&${extra.id}>` : `<@${extra.id}>` });
     }
+    const detailFile = changes.overflow ? textEvidence(`goat-audit-${entry.id}.txt`, `${title}\nAudit ID: ${entry.id}\nActor: ${entry.executorId ?? 'Unknown'}\nTarget: ${entry.targetId ?? 'Unknown'}\n\n${changes.details}`) : undefined;
     embed.setFooter({ text: `GOAT • Audit ID: ${entry.id}` });
     this.ctx.db.transaction(() => {
-      this.ctx.logs.enqueue({ embeds: [embed.toJSON()], components: logButtons(this.ctx.guild.id, undefined, entry.executorId ?? undefined).map(r => r.toJSON()) }, `audit:${entry.id}`);
+      this.ctx.logs.enqueue({ embeds: [embed.toJSON()], files: detailFile ? [detailFile] : undefined }, `audit:${entry.id}`);
       this.ctx.db.run('INSERT OR IGNORE INTO audit_seen(id,created_at) VALUES(?,?)', entry.id, Date.now());
     });
   }
@@ -74,11 +74,11 @@ export class AuditService {
   fallback(types: readonly AuditLogEvent[], targetId: string, title: string, details: string, predicate?: (entry: AuditEntry) => boolean): void {
     const at = Date.now();
     void (async () => {
-      await sleep(1800);
+      await sleep(4000);
       if (this.ctx.stopping) return;
       const entry = await this.find(types, targetId, at, predicate);
       if (entry) { this.ingest(entry); return; }
-      this.ctx.logs.enqueue({ embeds: [goatEmbed(title, colors.orange).setDescription(clip(details, 3500))
+      this.ctx.logs.enqueue({ correlation: { types: [...types], targetId, observedAt: at }, embeds: [goatEmbed(title, colors.orange).setDescription(clip(details, 3500))
         .addFields({ name: 'Target ID', value: `\`${targetId}\`` },
           { name: 'Performed By', value: 'Unknown — no unique matching audit entry was available.' }).toJSON()] }, `fallback:${title}:${targetId}:${at}`);
     })().catch(err => this.ctx.logger.error({ error: errorText(err) }, 'GOAT audit fallback failed'));

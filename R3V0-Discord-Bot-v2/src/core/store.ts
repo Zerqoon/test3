@@ -78,7 +78,52 @@ export class Store {
         PRIMARY KEY(giveaway_id,round,user_id)
       );
     `);
-    this.setMeta('schema_version', '1');
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS log_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id TEXT NOT NULL, payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+        sent_at INTEGER, message_id TEXT, error TEXT
+      );
+      CREATE TABLE IF NOT EXISTS log_receipts (
+        dedupe_key TEXT PRIMARY KEY, message_id TEXT, sent_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS member_arrivals (
+        guild_id TEXT NOT NULL, user_id TEXT NOT NULL, joined_at INTEGER NOT NULL,
+        eligible INTEGER NOT NULL DEFAULT 0, reminder_state TEXT NOT NULL DEFAULT 'waiting',
+        requested_at INTEGER, message_id TEXT, retry_at INTEGER NOT NULL DEFAULT 0, error TEXT,
+        PRIMARY KEY(guild_id,user_id,joined_at)
+      );
+      CREATE TABLE IF NOT EXISTS autorole_jobs (
+        guild_id TEXT NOT NULL, user_id TEXT NOT NULL, role_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, error TEXT,
+        PRIMARY KEY(guild_id,user_id,role_id)
+      );
+      CREATE TABLE IF NOT EXISTS temporary_messages (
+        message_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, delete_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', retry_at INTEGER NOT NULL DEFAULT 0, error TEXT
+      );
+      CREATE TABLE IF NOT EXISTS tickets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+        kind TEXT NOT NULL, channel_id TEXT UNIQUE, opening_message_id TEXT, state TEXT NOT NULL DEFAULT 'creating',
+        claimed_by TEXT, created_at INTEGER NOT NULL, closed_at INTEGER, closed_by TEXT,
+        close_reason TEXT, revision INTEGER NOT NULL DEFAULT 0, transcript_key TEXT,
+        retry_at INTEGER NOT NULL DEFAULT 0, permissions_dirty INTEGER NOT NULL DEFAULT 0, error TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS one_active_ticket ON tickets(guild_id,owner_id,kind)
+        WHERE state IN ('creating','open','closing','reopening');
+      CREATE TABLE IF NOT EXISTS ticket_participants (
+        ticket_id INTEGER NOT NULL REFERENCES tickets(id), user_id TEXT NOT NULL, added_by TEXT NOT NULL,
+        PRIMARY KEY(ticket_id,user_id)
+      );
+    `);
+    const logColumns = this.sqlite.prepare('PRAGMA table_info(log_outbox)').all() as { name: string }[];
+    if (!logColumns.some(column => column.name === 'batch_id')) this.sqlite.exec('ALTER TABLE log_outbox ADD COLUMN batch_id INTEGER');
+    const ticketColumns = this.sqlite.prepare('PRAGMA table_info(tickets)').all() as { name: string }[];
+    if (!ticketColumns.some(column => column.name === 'permissions_dirty')) this.sqlite.exec('ALTER TABLE tickets ADD COLUMN permissions_dirty INTEGER NOT NULL DEFAULT 0');
+    this.sqlite.exec("INSERT OR IGNORE INTO log_receipts(dedupe_key,message_id,sent_at) SELECT o.dedupe_key,b.message_id,o.sent_at FROM log_outbox o LEFT JOIN log_batches b ON b.id=o.batch_id WHERE o.status='sent' AND o.dedupe_key LIKE 'ticket-transcript:%'");
+    this.setMeta('schema_version', '2');
   }
   private statement(sql: string): StatementSync {
     let s = this.statements.get(sql);

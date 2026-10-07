@@ -61,12 +61,14 @@ export class HistoryService {
       const summary = this.summary();
       this.ctx.db.setMeta('history_state', summary.errors ? 'partial' : 'complete');
       this.progress = summary.errors ? 'Complete with inaccessible channels' : 'Available history indexed';
-      this.ctx.logs.enqueue({ embeds: [goatEmbed('History Sync', summary.errors ? colors.orange : colors.green)
+      const reportState = JSON.stringify([summary.errors, summary.pending, this.ctx.db.meta('history_thread_warning') ?? null]);
+      if (this.ctx.db.meta('history_last_report') !== reportState) this.ctx.logs.enqueue({ embeds: [goatEmbed('History Sync', summary.errors ? colors.orange : colors.green)
         .setDescription('Accessible message history has been indexed. Existing message IDs are deduplicated; restarting does not reset totals.')
         .addFields({ name: 'Messages Indexed', value: summary.indexed.toLocaleString('en-US'), inline: true },
           { name: 'Channels', value: `${summary.complete} complete • ${summary.pending} unfinished • ${summary.errors} with errors`, inline: true },
           { name: 'Coverage', value: 'Messages deleted before GOAT observed them and channels the bot cannot access cannot be reconstructed.' })
         .toJSON()] }, `history:${finishedAt}`);
+      this.ctx.db.setMeta('history_last_report', reportState);
     } catch (err) {
       this.ctx.db.setMeta('history_state', 'failed');
       this.progress = 'Sync failed; the next run will resume';

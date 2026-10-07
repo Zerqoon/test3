@@ -169,7 +169,7 @@ export class UsernameService {
           this.ctx.db.markDeleted(s.id);
         }
       });
-      if (!row.historical && this.ctx.config.usernames.logLiveConversions) this.ctx.logs.enqueue({ embeds: [goatEmbed('Username Locked', colors.green)
+      if (!row.historical && this.ctx.config.usernames.logLiveConversions && !this.ctx.config.logging.ignoreRoutineBotActions) this.ctx.logs.enqueue({ embeds: [goatEmbed('Username Locked', colors.green)
         .setThumbnail(s.avatarUrl).setDescription(clip(s.content || '[Attachment-only submission]', 3500))
         .addFields({ name: 'Author', value: `<@${s.authorId}> • ${clip(s.displayName, 128)}\nID: \`${s.authorId}\`` },
           { name: 'Locked Copy', value: `[Open submission](https://discord.com/channels/${s.guildId}/${s.channelId}/${archivedId})` })

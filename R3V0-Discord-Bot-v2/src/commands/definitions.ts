@@ -50,6 +50,16 @@ export const commandDefinitions = [
     .addStringOption(o => o.setName('message-id').setDescription('ID of the bot-owned archive message').setRequired(true).setMinLength(17).setMaxLength(20))
     .addStringOption(o => o.setName('reason').setDescription('Reason recorded in the GOAT log').setRequired(true).setMaxLength(1000)),
   new SlashCommandBuilder().setName('nickname-sync').setDescription('Refresh GOAT clan nickname tags'),
+  new SlashCommandBuilder().setName('autorole-sync').setDescription('Assign the GOAT member role to existing human members'),
+  new SlashCommandBuilder().setName('ticket-panel').setDescription('Publish or repair the GOAT ticket panel'),
+  new SlashCommandBuilder().setName('ticket-list').setDescription('Show recent GOAT tickets'),
+  new SlashCommandBuilder().setName('ticket-add').setDescription('Add a member to the current GOAT ticket')
+    .addUserOption(option => option.setName('user').setDescription('Member to add').setRequired(true)),
+  new SlashCommandBuilder().setName('ticket-remove').setDescription('Remove a participant from the current GOAT ticket')
+    .addUserOption(option => option.setName('user').setDescription('Member to remove').setRequired(true)),
+  new SlashCommandBuilder().setName('ticket-close').setDescription('Close the current GOAT ticket and save its transcript')
+    .addStringOption(option => option.setName('reason').setDescription('Closing reason').setRequired(true).setMaxLength(1000)),
+  new SlashCommandBuilder().setName('ticket-repair').setDescription('Restore configured privacy permissions for GOAT tickets'),
   new SlashCommandBuilder().setName('welcome-preview').setDescription('Preview the GOAT welcome card privately'),
   new SlashCommandBuilder().setName('goat-status').setDescription('View GOAT health, queued logs and database status'),
   new SlashCommandBuilder().setName('help').setDescription('Show GOAT commands')

@@ -5,12 +5,21 @@ import { errorText } from '../core/util.js';
 
 export interface LogPayload {
   embeds: APIEmbed[];
+  channelId?: string;
+  correlation?: { types: number[]; targetId: string; observedAt: number };
   components?: ReturnType<ActionRowBuilder<ButtonBuilder>['toJSON']>[];
   files?: { name: string; base64: string }[];
 }
-interface OutboxRow { id: number; payload: string; attempts: number; }
+interface OutboxRow { id: number; payload: string; attempts: number; created_at: number; }
+interface BatchRow { id: number; channel_id: string; payload: string; attempts: number; }
 
-/** Durable, serial delivery. Failed Discord requests do not drop audit evidence. */
+export function embedCharacters(embeds: APIEmbed[]): number {
+  return embeds.reduce((total, e) => total + (e.title?.length ?? 0) + (e.description?.length ?? 0) +
+    (e.footer?.text.length ?? 0) + (e.author?.name.length ?? 0) +
+    (e.fields?.reduce((n, field) => n + field.name.length + field.value.length, 0) ?? 0), 0);
+}
+
+/** Batches are frozen in SQLite before sending; retries keep identical contents. */
 export class LogService {
   private timer?: NodeJS.Timeout;
   private busy = false;
@@ -18,28 +27,80 @@ export class LogService {
   enqueue(payload: LogPayload, dedupeKey?: string): void {
     this.ctx.db.run('INSERT OR IGNORE INTO log_outbox(dedupe_key,payload,created_at) VALUES(?,?,?)', dedupeKey ?? null, JSON.stringify(payload), Date.now());
   }
-  start(): void { this.timer = setInterval(() => { void this.flush(); }, 600); }
+  enqueueLatest(payload: LogPayload, key: string): void {
+    this.enqueue(payload, key);
+    this.ctx.db.run("UPDATE log_outbox SET payload=? WHERE dedupe_key=? AND status='pending' AND batch_id IS NULL", JSON.stringify(payload), key);
+  }
+  delivered(key: string): boolean {
+    return !!this.ctx.db.get("SELECT 1 FROM log_receipts WHERE dedupe_key=? UNION ALL SELECT 1 FROM log_outbox WHERE dedupe_key=? AND status='sent' LIMIT 1", key, key);
+  }
+  cancelFallback(types: readonly number[], targetId: string, at: number): void {
+    const rows = this.ctx.db.all<OutboxRow>("SELECT * FROM log_outbox WHERE status='pending' AND batch_id IS NULL AND created_at>=?", at - 30000);
+    for (const row of rows) {
+      const correlation = (JSON.parse(row.payload) as LogPayload).correlation;
+      if (correlation?.targetId === targetId && correlation.types.some(type => types.includes(type)) && Math.abs(correlation.observedAt - at) <= 10000) {
+        this.ctx.db.run("UPDATE log_outbox SET status='superseded' WHERE id=? AND batch_id IS NULL", row.id);
+      }
+    }
+  }
+  start(): void { this.timer = setInterval(() => { void this.flush(); }, 700); }
   stop(): void { if (this.timer) clearInterval(this.timer); }
-  async flush(): Promise<void> {
+  private freeze(now: number): BatchRow | undefined {
+    const candidates = this.ctx.db.all<OutboxRow>("SELECT * FROM log_outbox WHERE status='pending' AND batch_id IS NULL AND next_attempt<=? ORDER BY id LIMIT 100", now);
+    const first = candidates[0];
+    if (!first || now - first.created_at < this.ctx.config.logging.batchWindowMs) return;
+    const firstPayload = JSON.parse(first.payload) as LogPayload;
+    const channelId = firstPayload.channelId ?? this.ctx.config.channels.logs;
+    const result: LogPayload = { embeds: [], components: [], files: [] };
+    const ids: number[] = [];
+    const names = new Set<string>();
+    for (const row of candidates) {
+      const p = JSON.parse(row.payload) as LogPayload;
+      if ((p.channelId ?? this.ctx.config.channels.logs) !== channelId) continue;
+      if (ids.length && (result.embeds.length + p.embeds.length > this.ctx.config.logging.batchMaxEmbeds ||
+        embedCharacters([...result.embeds, ...p.embeds]) > 5800 || result.files!.length + (p.files?.length ?? 0) > 10 ||
+        [...result.files!, ...(p.files ?? [])].reduce((bytes, file) => bytes + file.base64.length * 0.75, 0) > 8000000 ||
+        result.components!.length + (p.components?.length ?? 0) > 5 || p.files?.some(file => names.has(file.name)))) break;
+      result.embeds.push(...p.embeds);
+      result.components!.push(...(p.components ?? []));
+      result.files!.push(...(p.files ?? []));
+      for (const file of p.files ?? []) names.add(file.name);
+      ids.push(row.id);
+      if (result.embeds.length >= this.ctx.config.logging.batchMaxEmbeds) break;
+    }
+    return this.ctx.db.transaction(() => {
+      const id = Number(this.ctx.db.run('INSERT INTO log_batches(channel_id,payload,created_at) VALUES(?,?,?)', channelId, JSON.stringify(result), now).lastInsertRowid);
+      for (const rowId of ids) this.ctx.db.run('UPDATE log_outbox SET batch_id=? WHERE id=?', id, rowId);
+      return this.ctx.db.get<BatchRow>('SELECT * FROM log_batches WHERE id=?', id)!;
+    });
+  }
+  async flush(now = Date.now()): Promise<void> {
     if (this.busy || this.ctx.stopping) return;
     this.busy = true;
-    let row: OutboxRow | undefined;
+    let batch: BatchRow | undefined;
     try {
-      row = this.ctx.db.get<OutboxRow>("SELECT id,payload,attempts FROM log_outbox WHERE status='pending' AND next_attempt<=? ORDER BY id LIMIT 1", Date.now());
-      if (!row) return;
-      const channel = await this.ctx.guild.channels.fetch(this.ctx.config.channels.logs);
+      batch = this.ctx.db.get<BatchRow>("SELECT * FROM log_batches WHERE status='pending' AND next_attempt<=? ORDER BY id LIMIT 1", now) ?? this.freeze(now);
+      if (!batch) return;
+      const channel = await this.ctx.guild.channels.fetch(batch.channel_id);
       if (!channel?.isTextBased() || !('send' in channel)) throw new Error('Log channel is not a sendable channel.');
-      const p = JSON.parse(row.payload) as LogPayload;
+      const p = JSON.parse(batch.payload) as LogPayload;
       const payload: MessageCreateOptions = { embeds: p.embeds, components: p.components, allowedMentions: noMentions,
-        nonce: `goat-log-${row.id}`, enforceNonce: true,
+        nonce: `goat-log-${batch.id}`, enforceNonce: true,
         files: p.files?.map(f => new AttachmentBuilder(Buffer.from(f.base64, 'base64'), { name: f.name })) };
-      await channel.send(payload);
-      this.ctx.db.run("UPDATE log_outbox SET status='sent',sent_at=?,error=NULL WHERE id=?", Date.now(), row.id);
+      const message = await channel.send(payload);
+      this.ctx.db.transaction(() => {
+        this.ctx.db.run("UPDATE log_batches SET status='sent',sent_at=?,message_id=?,error=NULL WHERE id=?", now, message.id, batch!.id);
+        this.ctx.db.run("UPDATE log_outbox SET status='sent',sent_at=?,error=NULL WHERE batch_id=?", now, batch!.id);
+        this.ctx.db.run("INSERT OR IGNORE INTO log_receipts(dedupe_key,message_id,sent_at) SELECT dedupe_key,?,? FROM log_outbox WHERE batch_id=? AND dedupe_key LIKE 'ticket-transcript:%'", message.id, now, batch!.id);
+      });
     } catch (err) {
-      if (row) {
-        const delay = Math.min(300_000, 2000 * 2 ** Math.min(row.attempts, 8));
-        this.ctx.db.run('UPDATE log_outbox SET attempts=attempts+1,next_attempt=?,error=? WHERE id=?', Date.now() + delay, errorText(err), row.id);
-        this.ctx.logger.warn({ outboxId: row.id, error: errorText(err) }, 'GOAT log delivery will retry');
+      if (batch) {
+        const retryAt = now + Math.min(300000, 2000 * 2 ** Math.min(batch.attempts, 8));
+        this.ctx.db.transaction(() => {
+          this.ctx.db.run('UPDATE log_batches SET attempts=attempts+1,next_attempt=?,error=? WHERE id=?', retryAt, errorText(err), batch!.id);
+          this.ctx.db.run('UPDATE log_outbox SET attempts=attempts+1,next_attempt=?,error=? WHERE batch_id=?', retryAt, errorText(err), batch!.id);
+        });
+        this.ctx.logger.warn({ batchId: batch.id, error: errorText(err) }, 'GOAT log batch will retry');
       } else this.ctx.logger.error({ error: errorText(err) }, 'GOAT log worker failed');
     }
     finally { this.busy = false; }

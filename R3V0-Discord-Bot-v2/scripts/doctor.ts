@@ -10,6 +10,7 @@ if (process.env.RAILWAY_ENVIRONMENT_ID) console.log('Railway: database path is i
 console.log(`Guild: ${env.guildId ? 'Configured' : 'Auto-detection enabled'}`);
 console.log(`Config: valid • timezone: ${config.timezone}`);
 console.log(`Banner: ${existsSync('assets/goat-banner.png') ? 'OK' : 'MISSING'}`);
+console.log(`Application example: ${existsSync('assets/application-mastery-example.png') ? 'OK' : 'MISSING'}`);
 console.log(`Font: ${existsSync('assets/fonts/DejaVuSans-Bold.ttf') ? 'OK' : 'MISSING'}`);
 console.log(`Commands: ${commandDefinitions.length} definitions validated`);
 for (const c of commandDefinitions) c.toJSON();

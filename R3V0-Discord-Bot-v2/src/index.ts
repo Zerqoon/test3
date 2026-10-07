@@ -16,6 +16,8 @@ import { AuditService } from './services/audit.js';
 import { installEvents } from './events/install.js';
 import { goatEmbed, colors } from './core/embeds.js';
 import { maintain } from './services/maintenance.js';
+import { MemberService } from './services/members.js';
+import { TicketService } from './services/tickets.js';
 
 requireToken();
 assertPersistentDatabase();
@@ -39,6 +41,7 @@ async function shutdown(code = 0): Promise<void> {
   if (ctx) {
     ctx.stopping = true;
     ctx.logs.stop(); ctx.history.stop(); ctx.usernames.stop(); ctx.giveaways.stop(); ctx.moderation.stop();
+    ctx.members.stop(); ctx.tickets.stop();
   }
   if (maintenanceTimer) clearInterval(maintenanceTimer);
   lease.release();
@@ -66,6 +69,7 @@ client.once(Events.ClientReady, ready => {
     ctx.logs = new LogService(ctx); ctx.usernames = new UsernameService(ctx); ctx.history = new HistoryService(ctx);
     ctx.nicknames = new NicknameService(ctx); ctx.giveaways = new GiveawayService(ctx);
     ctx.moderation = new ModerationService(ctx); ctx.audit = new AuditService(ctx);
+    ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx);
     installEvents(ctx);
     for (const id of [config.channels.logs, config.channels.welcome]) {
       const channel = await guild.channels.fetch(id);
@@ -76,18 +80,26 @@ client.once(Events.ClientReady, ready => {
       await rest.put(Routes.applicationGuildCommands(ready.user.id, guild.id), { body: commandDefinitions.map(c => c.toJSON()) });
     }
     ready.user.setPresence({ activities: [{ name: 'GOAT • Clan Community', type: ActivityType.Watching }], status: 'online' });
+    let membersLoaded = true;
     try { await guild.members.fetch(); }
-    catch (err) { logger.warn({ error: errorText(err) }, 'GOAT member preload unavailable; historical author names may use global display names'); }
+    catch (err) { membersLoaded = false; logger.warn({ error: errorText(err) }, 'GOAT member preload will retry; historical author names may use global display names'); }
     ctx.logs.start(); ctx.usernames.start(); ctx.giveaways.start(); ctx.moderation.start();
+    ctx.members.initialize(guild.members.cache.values());
+    if (!membersLoaded) ctx.members.requestInitialSync();
+    ctx.members.start(); ctx.tickets.start();
+    if (config.tickets.enabled) {
+      try { await ctx.tickets.ensurePanel(); await ctx.tickets.syncPermissions(); }
+      catch (err) { logger.warn({ error: errorText(err) }, 'GOAT ticket panel needs attention; use /ticket-panel after checking channel access'); }
+    }
     maintain(ctx);
     maintenanceTimer = setInterval(() => { if (ctx && !ctx.stopping) { try { maintain(ctx); } catch (err) { logger.warn({ error: errorText(err) }, 'GOAT maintenance will retry'); } } }, 3600000);
     if (config.history.autoImport) { ctx.history.startTimer(); void ctx.history.run(); }
     else ctx.usernames.releaseHistory();
     const activeContext = ctx;
     void ctx.nicknames.syncAll(false).catch(err => logger.warn({ error: errorText(err) }, 'GOAT initial nickname sync failed'));
-    activeContext.logs.enqueue({ embeds: [goatEmbed('System Online', colors.green).setDescription('GOAT is online. Persistent jobs have resumed; accessible message history will be imported automatically.')
-      .addFields({ name: 'Version', value: '1.0.0' }, { name: 'Message Periods', value: `${config.timezone} • Monday-based weeks` }).toJSON()] }, `online:${Date.now()}`);
-    logger.info({ guildId: guild.id, version: '1.0.0' }, 'GOAT ready');
+    if (config.logging.logSystemOnline) activeContext.logs.enqueue({ embeds: [goatEmbed('System Online', colors.green).setDescription('GOAT is online. Persistent jobs have resumed.')
+      .addFields({ name: 'Version', value: '2.0.0' }).toJSON()] }, `online:${Date.now()}`);
+    logger.info({ guildId: guild.id, version: '2.0.0' }, 'GOAT ready');
   })().catch(err => { logger.fatal({ error: errorText(err) }, 'GOAT startup failed'); void shutdown(1); });
 });
 client.login(env.token).catch(err => { logger.fatal({ error: errorText(err) }, 'GOAT login failed; check DISCORD_TOKEN and privileged intents'); void shutdown(1); });

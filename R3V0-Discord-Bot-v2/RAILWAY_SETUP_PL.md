@@ -11,6 +11,8 @@ Kanały, dopisek klanu, role administracji i Twój osobisty dostęp są już ust
 
 ## 2. Pliki na GitHubie
 
+**Dla Twojego istniejącego repozytorium Zerqoon/test3:** użyj `UPLOAD-GITHUB.ps1` według `UPDATE_V2_PL.md`. Projekt trafi do folderu **R3V0-Discord-Bot-v2**, więc ustaw **Root Directory: `/R3V0-Discord-Bot-v2`**. Skrypt umieszcza workflow testów w głównym folderze repozytorium. Zachowaj podłączony serwis i wolumen. Poniższe kroki opisują alternatywne utworzenie osobnego repozytorium.
+
 1. Rozpakuj cały ZIP.
 2. Utwórz repozytorium, np. `goat-clan-bot`. Możesz wybrać prywatne repozytorium i przyznać Railway dostęp do niego.
 3. Wgraj **zawartość folderu GOAT-Clan-Bot do głównego katalogu repozytorium**. Po wejściu do repozytorium od razu powinno być widać `Dockerfile`, `package.json`, `package-lock.json`, `config.json` oraz foldery `src`, `scripts`, `tests` i `assets`.
@@ -19,7 +21,7 @@ Kanały, dopisek klanu, role administracji i Twój osobisty dostęp są już ust
 
 Po pushu zakładka **Actions** uruchomi kompilację i lokalne testy. Testy nie wymagają tokenu Discorda.
 
-Jeśli wgrałeś cały folder `GOAT-Clan-Bot` jako podfolder repozytorium, ustaw w Railway **Settings → Root Directory** na `/GOAT-Clan-Bot`. Dla zalecanego układu z plikami w głównym katalogu zostaw ustawienie domyślne.
+W repozytorium **Zerqoon/test3** ustaw **Settings → Root Directory** na **`/R3V0-Discord-Bot-v2`**. W innym repozytorium wybierz ścieżkę folderu zawierającego `Dockerfile` i `package.json`; przy plikach w samym głównym katalogu ustawienie może pozostać domyślne.
 
 ## 3. Usługa na Railway
 
@@ -44,7 +46,7 @@ Jeśli wgrałeś cały folder `GOAT-Clan-Bot` jako podfolder repozytorium, ustaw
 2. Ustaw **Mount Path** dokładnie na **`/app/data`**.
 3. Zatwierdź oczekujące zmiany wraz ze zmiennymi usługi.
 
-Na wolumenie będą statystyki, archiwum nicków, wpisy giveawayów, zapisane losowania, sprawy moderacyjne i kolejka logów. Aktualizacja kodu nie usuwa tych danych.
+Na wolumenie będą statystyki, archiwum nicków, wpisy giveawayów, zapisane losowania, sprawy moderacyjne, kolejka logów, tickety, autorole i terminy usunięcia przypomnień. Aktualizacja kodu nie usuwa tych danych.
 
 Railway montuje wolumen z uprawnieniami root, dlatego `RAILWAY_RUN_UID=0` pozwala procesowi z tego obrazu zapisywać bazę. Bot sprawdza, czy na Railway istnieje wolumen i czy `DATABASE_PATH` leży wewnątrz niego. Przy złym ustawieniu zobaczysz konkretny błąd w logach.
 
@@ -53,6 +55,7 @@ Railway montuje wolumen z uprawnieniami root, dlatego `RAILWAY_RUN_UID=0` pozwal
 | Ustawienie | Wartość |
 | --- | --- |
 | Builder | Wykrywany automatycznie z `Dockerfile` |
+| Root Directory w Zerqoon/test3 | `/R3V0-Discord-Bot-v2` |
 | Build Command | Pozostaw puste — instalację i kompilację wykonuje Dockerfile |
 | Start Command | Pozostaw puste — obraz uruchamia `node dist/src/index.js` |
 | Replicas | `1` |

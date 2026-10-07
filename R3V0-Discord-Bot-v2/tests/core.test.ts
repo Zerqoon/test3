@@ -89,12 +89,12 @@ test('failed database publication write does not delete the original', async () 
   await assert.rejects(publishThenDelete({ publish: async () => 'id', savePublication: () => { throw new Error('DB error'); }, deleteSource: async () => { deleted = true; }, saveDeleted: () => {} }));
   assert.equal(deleted, false);
 });
-test('giveaway modal contains four text fields and a native optional role picker', () => {
+test('giveaway modal contains four text fields and a mandatory native role picker', () => {
   const data = giveawayModal('draft').toJSON();
   assert.equal(data.components.length, 5);
   assert.ok(data.components.every(c => c.type === 18));
   const picker = data.components[4] as { component: { type: number; min_values: number; required: boolean } };
-  assert.equal(picker.component.type, 6); assert.equal(picker.component.required, false); assert.equal(picker.component.min_values, 0);
+  assert.equal(picker.component.type, 6); assert.equal(picker.component.required, true); assert.equal(picker.component.min_values, 1);
   for (const c of commandDefinitions) assert.ok(c.toJSON().name);
 });
 test('only one process can own a database; stale leases can be recovered', () => {

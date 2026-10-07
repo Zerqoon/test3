@@ -13,7 +13,7 @@
   "nickname": { "roleId": "1552474081054564402", "suffix": " | GOAT" },
   "usernames": {
     "convertExistingOnStartup": true,
-    "logLiveConversions": true,
+    "logLiveConversions": false,
     "maxAttachmentBytes": 8000000,
     "maxTotalAttachmentBytes": 24000000
   },
@@ -24,7 +24,23 @@
     "excludedChannelIds": [],
     "pageDelayMs": 150
   },
-  "logging": { "logGifs": true, "retainMessageContentDays": 0 },
-  "giveaways": { "maxDurationDays": 365, "maxWinners": 20 },
+  "logging": {
+    "logGifs": true,
+    "retainMessageContentDays": 0,
+    "batchWindowMs": 8000,
+    "batchMaxEmbeds": 5,
+    "ignoreRoutineBotActions": true,
+    "logSystemOnline": false
+  },
+  "giveaways": { "maxDurationDays": 365, "maxWinners": 20, "defaultRoleId": "718165098526670948" },
+  "autorole": { "enabled": true, "roleId": "1552638283748737094", "syncExistingOnStartup": true },
+  "usernameReminder": { "enabled": true, "roleId": "718165098526670948", "deleteAfterSeconds": 60 },
+  "tickets": {
+    "enabled": true,
+    "panelChannelId": "1557384522713276488",
+    "logChannelId": "1557404763136721017",
+    "categoryId": null,
+    "maxParticipants": 20
+  },
   "autoRegisterCommands": true
 }

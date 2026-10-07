@@ -15,14 +15,15 @@ function userFields(s: MessageSnapshot) {
     { name: 'Message', value: `\`${s.id}\`\nSent ${stamp(s.createdAt, 'f')}`, inline: true }];
 }
 function logGif(ctx: Context, s: MessageSnapshot): void {
-  if (!ctx.config.logging.logGifs || s.channelId === ctx.config.channels.logs || s.bot) return;
+  if (!ctx.config.logging.logGifs || s.channelId === ctx.config.channels.logs || s.channelId === ctx.config.tickets.logChannelId || s.bot) return;
   const media = gifMedia(s);
   if (!media.links.length) return;
   const embed = goatEmbed('GIF Sent', colors.purple).setThumbnail(s.avatarUrl)
     .setDescription(clip(s.content || '*GIF attachment*', 2000)).addFields(...userFields(s),
       { name: 'GIF / Media Links', value: clip(media.links.join('\n'), 1000) });
   if (media.preview?.startsWith('https://')) embed.setImage(media.preview);
-  ctx.logs.enqueue({ embeds: [embed.toJSON()], files: [textEvidence(`goat-gif-${s.id}.txt`, evidence(s))],
+  ctx.logs.enqueueLatest({ channelId: ctx.tickets?.fromChannel(s.channelId) ? ctx.config.tickets.logChannelId : undefined,
+    embeds: [embed.toJSON()], files: s.content.length > 2000 ? [textEvidence(`goat-gif-${s.id}.txt`, evidence(s))] : undefined,
     components: logButtons(s.guildId, s.channelId, s.authorId, s.id).map(r => r.toJSON()) }, `gif:${s.id}`);
 }
 function sameEditableContent(a: MessageSnapshot, b: MessageSnapshot): boolean {
@@ -35,7 +36,10 @@ async function logDeleted(ctx: Context, message: Message | PartialMessage): Prom
   if (!s && !message.partial) { s = snapshotMessage(message as Message); ctx.db.recordMessage(s, 'live'); }
   ctx.db.markDeleted(message.id);
   const converted = ctx.db.get<{ published_id: string | null }>('SELECT published_id FROM username_archives WHERE source_id=?', message.id);
-  if (converted?.published_id || s?.bot || message.channelId === ctx.config.channels.logs) return;
+  if (converted?.published_id || s?.bot || message.channelId === ctx.config.channels.logs || message.channelId === ctx.config.tickets.logChannelId ||
+    ctx.db.get('SELECT 1 FROM temporary_messages WHERE message_id=?', message.id) ||
+    ctx.db.get('SELECT 1 FROM tickets WHERE opening_message_id=?', message.id) ||
+    ctx.db.meta('ticket_panel_message_id') === message.id) return;
   const embed = goatEmbed('Message Deleted', colors.red);
   if (s) {
     embed.setThumbnail(s.avatarUrl).setDescription(clip(s.content || '*No text content*', 3000)).addFields(...userFields(s));
@@ -43,7 +47,9 @@ async function logDeleted(ctx: Context, message: Message | PartialMessage): Prom
   } else embed.setDescription('Content unavailable — GOAT had not observed this message before it was deleted.')
     .addFields({ name: 'Message ID', value: `\`${message.id}\`` }, { name: 'Channel', value: `<#${message.channelId}>` });
   if (ctx.stopping) return;
-  ctx.logs.enqueue({ embeds: [embed.toJSON()], files: s ? [textEvidence(`goat-deleted-${s.id}.txt`, evidence(s))] : undefined,
+  if (s?.attachments.length) embed.addFields({ name: 'Attachments', value: clip(s.attachments.map(file => `[${safeText(file.name, 80)}](${file.url})`).join('\n'), 900) });
+  ctx.logs.enqueue({ channelId: ctx.tickets?.fromChannel(message.channelId) ? ctx.config.tickets.logChannelId : undefined,
+    embeds: [embed.toJSON()], files: s && (s.content.length > 3000 || s.embeds.length || s.stickers.length) ? [textEvidence(`goat-deleted-${s.id}.txt`, evidence(s))] : undefined,
     components: logButtons(ctx.guild.id, message.channelId, s?.authorId).map(r => r.toJSON()) }, `delete:${message.id}`);
 }
 function memberDetails(member: GuildMember): string {
@@ -70,17 +76,22 @@ export function installEvents(ctx: Context): void {
     const after = snapshotMessage(message);
     ctx.history.ingest(message, 'live');
     logGif(ctx, after);
-    if (message.channelId === ctx.config.channels.logs || (before && sameEditableContent(before, after))) return;
+    if (message.channelId === ctx.config.channels.logs || message.channelId === ctx.config.tickets.logChannelId || (before && sameEditableContent(before, after))) return;
     const embed = goatEmbed('Message Edited', colors.orange).setThumbnail(after.avatarUrl).addFields(...userFields(after),
       { name: 'Before', value: clip(before?.content || (before ? '[No text]' : '[Not observed before edit]'), 1000) },
       { name: 'After', value: clip(after.content || '[No text]', 1000) });
     const hash = createHash('sha256').update(JSON.stringify([after.content, after.attachments, after.editedAt])).digest('hex').slice(0, 16);
-    ctx.logs.enqueue({ embeds: [embed.toJSON()], files: [textEvidence(`goat-edit-${after.id}.txt`, `${before ? evidence(before) : 'BEFORE: Not observed'}\n\nAFTER:\n${evidence(after)}`)],
+    if (JSON.stringify(before?.attachments) !== JSON.stringify(after.attachments) && (before?.attachments.length || after.attachments.length)) {
+      embed.addFields({ name: 'Attachments', value: clip(after.attachments.map(file => `[${safeText(file.name, 80)}](${file.url})`).join('\n') || 'Removed', 900) });
+    }
+    ctx.logs.enqueue({ channelId: ctx.tickets?.fromChannel(after.channelId) ? ctx.config.tickets.logChannelId : undefined,
+      embeds: [embed.toJSON()], files: (before?.content.length ?? 0) > 1000 || after.content.length > 1000 || before?.embeds.length || after.embeds.length || before?.stickers.length || after.stickers.length ?
+        [textEvidence(`goat-edit-${after.id}.txt`, `${before ? evidence(before) : 'BEFORE: Not observed'}\n\nAFTER:\n${evidence(after)}`)] : undefined,
       components: logButtons(after.guildId, after.channelId, after.authorId, after.id).map(r => r.toJSON()) }, `edit:${after.id}:${hash}`);
   }));
   client.on(Events.MessageDelete, m => protect('messageDelete', () => logDeleted(ctx, m)));
   client.on(Events.MessageBulkDelete, (messages, channel) => protect('messageDeleteBulk', () => {
-    if (channel.guild.id !== ctx.guild.id || channel.id === ctx.config.channels.logs) return;
+    if (channel.guild.id !== ctx.guild.id || channel.id === ctx.config.channels.logs || channel.id === ctx.config.tickets.logChannelId) return;
     const records: string[] = [];
     let human = 0;
     for (const m of messages.values()) {
@@ -91,7 +102,8 @@ export function installEvents(ctx: Context): void {
     }
     if (!records.length) return;
     const firstId = [...messages.keys()].sort()[0];
-    ctx.logs.enqueue({ embeds: [goatEmbed('Messages Bulk Deleted', colors.red)
+    ctx.logs.enqueue({ channelId: ctx.tickets?.fromChannel(channel.id) ? ctx.config.tickets.logChannelId : undefined,
+      embeds: [goatEmbed('Messages Bulk Deleted', colors.red)
       .setDescription(`${messages.size} messages removed from <#${channel.id}>.\n${human} human message snapshots are available in the evidence file.`)
       .addFields({ name: 'Attribution', value: 'Discord does not provide a per-message actor for a bulk deletion. Check the server audit log.' }).toJSON()],
       files: [textEvidence(`goat-bulk-${firstId}.txt`, records.join('\n\n--------------------\n\n'))],
@@ -100,6 +112,7 @@ export function installEvents(ctx: Context): void {
   client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => protect('audit', () => { if (guild.id === ctx.guild.id) ctx.audit.ingest(entry); }));
   client.on(Events.GuildMemberAdd, member => protect('memberAdd', async () => {
     if (member.guild.id !== ctx.guild.id) return;
+    ctx.members.onJoin(member);
     ctx.logs.enqueue({ embeds: [goatEmbed('Member Joined', colors.green).setThumbnail(member.displayAvatarURL({ extension: 'png' }))
       .setDescription(memberDetails(member)).addFields({ name: 'Account Created', value: `${stamp(member.user.createdTimestamp)}\n${stamp(member.user.createdTimestamp, 'R')}`, inline: true },
         { name: 'Account Age', value: humanDuration(Date.now() - member.user.createdTimestamp), inline: true },
@@ -120,6 +133,7 @@ export function installEvents(ctx: Context): void {
   }));
   client.on(Events.GuildMemberUpdate, (before, after) => protect('memberUpdate', async () => {
     if (after.guild.id !== ctx.guild.id) return;
+    ctx.members.observe(after);
     const added = [...after.roles.cache.keys()].filter(id => !before.roles.cache.has(id));
     const removed = [...before.roles.cache.keys()].filter(id => !after.roles.cache.has(id));
     if (added.length || removed.length) {
@@ -153,7 +167,10 @@ export function installEvents(ctx: Context): void {
     if (c.guild.id === ctx.guild.id) ctx.audit.fallback([AuditLogEvent.ChannelCreate], c.id, 'Channel Created', `Name: **${safeText(c.name)}**`);
   }));
   client.on(Events.ChannelDelete, c => protect('channelDelete', () => {
-    if ('guild' in c && c.guild.id === ctx.guild.id) ctx.audit.fallback([AuditLogEvent.ChannelDelete], c.id, 'Channel Deleted', `Name: **${safeText(c.name)}**`);
+    if ('guild' in c && c.guild.id === ctx.guild.id) {
+      ctx.tickets.channelDeleted(c.id);
+      ctx.audit.fallback([AuditLogEvent.ChannelDelete], c.id, 'Channel Deleted', `Name: **${safeText(c.name)}**`);
+    }
   }));
   client.on(Events.ThreadCreate, (c, newlyCreated) => protect('threadCreate', () => {
     if (newlyCreated && c.guild.id === ctx.guild.id) ctx.audit.fallback([AuditLogEvent.ThreadCreate], c.id, 'Thread Created', `Name: **${safeText(c.name)}**`);
@@ -182,6 +199,7 @@ export function installEvents(ctx: Context): void {
   client.on(Events.GuildRoleDelete, role => protect('roleDelete', () => { if (role.guild.id === ctx.guild.id) ctx.audit.fallback([AuditLogEvent.RoleDelete], role.id, 'Role Deleted', `**${safeText(role.name)}**\nRole ID: \`${role.id}\``); }));
   client.on(Events.GuildRoleUpdate, (before, after) => protect('roleUpdate', () => {
     if (after.guild.id !== ctx.guild.id) return;
+    if (before.name === after.name && before.color === after.color && before.permissions.bitfield === after.permissions.bitfield && before.position === after.position && before.hoist === after.hoist && before.mentionable === after.mentionable) return;
     ctx.audit.fallback([AuditLogEvent.RoleUpdate], after.id, 'Role Updated', `Role: **${safeText(before.name)}** → **${safeText(after.name)}**\nColor: ${before.hexColor} → ${after.hexColor}\nPermissions: ${before.permissions.bitfield} → ${after.permissions.bitfield}\nPosition: ${before.position} → ${after.position}`);
   }));
 }

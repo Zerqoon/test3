@@ -17,8 +17,19 @@ export const configSchema = z.object({
   history: z.object({ autoImport: z.boolean(), includeArchivedThreads: z.boolean(),
     syncIntervalMinutes: z.number().int().min(5).max(1440),
     excludedChannelIds: z.array(snowflake), pageDelayMs: z.number().int().min(0).max(5000) }),
-  logging: z.object({ logGifs: z.boolean(), retainMessageContentDays: z.number().int().min(0) }),
-  giveaways: z.object({ maxDurationDays: z.number().int().min(1).max(3650), maxWinners: z.number().int().min(1).max(20) }),
+  logging: z.object({ logGifs: z.boolean(), retainMessageContentDays: z.number().int().min(0),
+    batchWindowMs: z.number().int().min(0).max(60000).default(8000),
+    batchMaxEmbeds: z.number().int().min(1).max(10).default(5),
+    ignoreRoutineBotActions: z.boolean().default(true), logSystemOnline: z.boolean().default(false) }),
+  giveaways: z.object({ maxDurationDays: z.number().int().min(1).max(3650), maxWinners: z.number().int().min(1).max(20),
+    defaultRoleId: snowflake.default('718165098526670948') }),
+  autorole: z.object({ enabled: z.boolean(), roleId: snowflake, syncExistingOnStartup: z.boolean() })
+    .default({ enabled: true, roleId: '1552638283748737094', syncExistingOnStartup: true }),
+  usernameReminder: z.object({ enabled: z.boolean(), roleId: snowflake, deleteAfterSeconds: z.number().int().min(10).max(3600) })
+    .default({ enabled: true, roleId: '718165098526670948', deleteAfterSeconds: 60 }),
+  tickets: z.object({ enabled: z.boolean(), panelChannelId: snowflake, logChannelId: snowflake,
+    categoryId: snowflake.nullable().default(null), maxParticipants: z.number().int().min(1).max(50).default(20) })
+    .default({ enabled: true, panelChannelId: '1557384522713276488', logChannelId: '1557404763136721017', categoryId: null, maxParticipants: 20 }),
   autoRegisterCommands: z.boolean()
 }).superRefine((c, ctx) => {
   if (new Set(Object.values(c.channels)).size !== 3) ctx.addIssue({ code: 'custom', message: 'The three configured channels must be different.' });

@@ -1,8 +1,8 @@
-# GOAT — uruchomienie
+# GOAT 2.0 — uruchomienie
 
 Projekt jest przygotowany dla Twojego serwera. Kanały, rola klanu, dwie role administracji oraz Twój osobisty dostęp są już wpisane w `config.json`. Cały interfejs bota jest po angielsku.
 
-**Wdrażasz przez GitHub + Railway: otwórz RAILWAY_SETUP_PL.md.** Tam znajdziesz dokładne kroki, zmienne środowiskowe i ustawienie trwałego wolumenu. Poniższa instalacja dotyczy uruchomienia na własnym komputerze.
+**Aktualizujesz Zerqoon/test3 i Railway: otwórz UPDATE_V2_PL.md.** Do projektu dołączony jest `UPLOAD-GITHUB.ps1`, który podmienia podfolder `R3V0-Discord-Bot-v2` i wysyła commit. Pełne ustawienia hostingu są w `RAILWAY_SETUP_PL.md`. Poniższa instalacja dotyczy uruchomienia na własnym komputerze.
 
 1. Zainstaluj **Node.js 24 LTS, co najmniej 24.15** z https://nodejs.org/ .
 2. Rozpakuj cały ZIP do jednego folderu.
@@ -37,6 +37,10 @@ Nie musisz wpisywać ID serwera — bot rozpozna je po kanale z nickami. `GUILD_
 | `/nickname-sync` | Ponowne sprawdzenie dopisku klanu |
 | `/welcome-preview` | Prywatny podgląd karty welcome |
 | `/goat-status` | Stan bota i zaległe zadania |
+| `/autorole-sync` | Uzupełnienie roli wszystkich ludzi |
+| `/ticket-panel`, `/ticket-list` | Panel i prywatna lista ticketów |
+| `/ticket-add user:...`, `/ticket-remove user:...` | Dostęp konkretnej osoby do aktualnego ticketu |
+| `/ticket-close reason:...`, `/ticket-repair` | Zamknięcie lub naprawienie prywatnych uprawnień |
 
 Obsługiwane czasy: `1s`, `10s`, `1m`, `1 minute`, `30 minutes`, `1h 30m`, `1 day`, `1w`. Bot odrzuca niepoprawne wartości zamiast zgadywać jednostkę.
 
@@ -52,7 +56,7 @@ Pierwszy import może potrwać przy dużej historii. Bot czyta wszystkie dostęp
 
 **Nie da się policzyć wiadomości usuniętych przed dodaniem bota ani odzyskać niedostępnych kanałów.** Wszystkie znalezione wcześniejsze wiadomości zostaną policzone. Wiadomości, które GOAT już zaobserwował, pozostają w licznikach nawet po usunięciu.
 
-Discord nie zawsze ujawnia sprawcę pojedynczego usunięcia. Bot pokazuje dokładnego wykonawcę z audytu przy rolach, kanałach i moderacji. Przy usunięciach oznacza niepewne przypisanie jako kandydat z audytu, a brak danych jako Unknown. Plik TXT w logu zachowuje tekst oraz metadane; zewnętrzne linki do załączników mogą wygasnąć. W archiwum nicków pliki są kopiowane przed usunięciem źródła.
+Discord nie zawsze ujawnia sprawcę pojedynczego usunięcia. Bot pokazuje wykonawcę dostarczonego przez audyt przy rolach, kanałach i moderacji. Przy usunięciach oznacza niepewne przypisanie jako kandydat z audytu, a brak danych jako Unknown. Krótkie zdarzenia mają czytelny embed; długie szczegóły są zachowane w TXT. Zewnętrzne linki do załączników mogą wygasnąć. W archiwum nicków pliki są kopiowane przed usunięciem źródła. Logi są grupowane, a rutynowe własne działania bota wyciszone. Szczegóły autoroli, przypomnień i ticketów są w `UPDATE_V2_PL.md`.
 
 DM jest wysyłany, gdy Discord na to pozwala. Osoba z zamkniętymi DM nie otrzyma wiadomości; wynik dostarczenia jest odnotowany w sprawie. Bot nie wymaga Presence Intent i nie korzysta z webhooks.
 

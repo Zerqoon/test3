@@ -8,7 +8,8 @@ const snowflake = z.string().regex(/^\d{17,20}$/, 'Expected a Discord ID stored 
 export const configSchema = z.object({
   brand: z.literal('GOAT'),
   timezone: z.string().refine(s => DateTime.now().setZone(s).isValid, 'Invalid timezone'),
-  channels: z.object({ usernames: snowflake, logs: snowflake, welcome: snowflake }),
+  channels: z.object({ usernames: snowflake, logs: snowflake, welcome: snowflake,
+    messageLogs: snowflake.default('1557439487813091358'), memberLogs: snowflake.default('1557439665378959491') }),
   access: z.object({ staffRoleIds: z.array(snowflake).min(1), ownerUserIds: z.array(snowflake).min(1) }),
   nickname: z.object({ roleId: snowflake, suffix: z.string().min(1).max(12) }),
   usernames: z.object({ convertExistingOnStartup: z.boolean(), logLiveConversions: z.boolean(),
@@ -27,12 +28,19 @@ export const configSchema = z.object({
     .default({ enabled: true, roleId: '1552638283748737094', syncExistingOnStartup: true }),
   usernameReminder: z.object({ enabled: z.boolean(), roleId: snowflake, deleteAfterSeconds: z.number().int().min(10).max(3600) })
     .default({ enabled: true, roleId: '718165098526670948', deleteAfterSeconds: 60 }),
-  tickets: z.object({ enabled: z.boolean(), panelChannelId: snowflake, logChannelId: snowflake,
-    categoryId: snowflake.nullable().default(null), maxParticipants: z.number().int().min(1).max(50).default(20) })
-    .default({ enabled: true, panelChannelId: '1557384522713276488', logChannelId: '1557404763136721017', categoryId: null, maxParticipants: 20 }),
+  tickets: z.object({ enabled: z.boolean().default(true), panelChannelId: snowflake.default('1557384522713276488'),
+    logChannelId: snowflake.default('1557439533979803678'), categoryId: snowflake.nullable().default(null),
+    maxParticipants: z.number().int().min(1).max(50).default(20),
+    cooldownSeconds: z.number().int().min(0).max(86400).default(300),
+    maxTicketsPerHour: z.number().int().min(1).max(20).default(3),
+    maxOpenTickets: z.number().int().min(1).max(200).default(50),
+    voting: z.object({ enabled: z.boolean().default(true), channelId: snowflake.default('1557433699572777000'),
+      durationSeconds: z.number().int().min(60).max(604800).default(600),
+      minimumVotes: z.number().int().min(1).max(1000).default(3), voterRoleIds: z.array(snowflake).default([]) }).default({})
+  }).default({}),
   autoRegisterCommands: z.boolean()
 }).superRefine((c, ctx) => {
-  if (new Set(Object.values(c.channels)).size !== 3) ctx.addIssue({ code: 'custom', message: 'The three configured channels must be different.' });
+  if (new Set(Object.values(c.channels)).size !== Object.values(c.channels).length) ctx.addIssue({ code: 'custom', message: 'The configured log, username and welcome channels must be different.' });
 });
 
 export type Config = z.infer<typeof configSchema>;

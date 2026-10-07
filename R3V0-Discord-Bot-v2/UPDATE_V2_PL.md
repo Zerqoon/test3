@@ -1,89 +1,85 @@
-# GOAT 2.0 — aktualizacja GitHub + Railway
+# GOAT 2.1 — aktualizacja GitHub + Railway
 
-## Wgraj projekt
-
-### Naprawa aktualizacji, gdy Railway nadal pokazuje 1.0.0
-
-Pobierz pełny `GOAT-Clan-Bot-v2-Tickets.zip` oraz `INSTALL-AND-UPLOAD-GOAT.ps1` do Pobranych. Wklej w PowerShell:
+Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **INSTALL-AND-UPLOAD-GOAT.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.1.0**.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\zerqo\Downloads\INSTALL-AND-UPLOAD-GOAT.ps1"
 ```
 
-Skrypt wybierze najnowszy pobrany ZIP o tej nazwie, zweryfikuje wersję 2.0.0 i pliki ticketów, uzupełni projekt na Pulpicie oraz wykona upload z kodu bezpośrednio rozpakowanego z ZIP-a. Lokalna baza i `.env` są zachowane. Na końcu pokaże commit wysłany do GitHuba. Jeśli pobierasz pliki do innego folderu, podaj pełną ścieżkę skryptu oraz parametr `-ZipPath "pełna ścieżka ZIP-a"`.
+Skrypt wybierze najnowszy ZIP, sprawdzi wersję i obecność systemu głosowania, zaktualizuje `C:\Users\zerqo\Desktop\GOAT-Clan-Bot`, a następnie podmieni `R3V0-Discord-Bot-v2` w repozytorium **Zerqoon/test3**, wykona commit i zwykły push do `main`. Wysyła źródła bezpośrednio z rozpakowanego ZIP-a. Zachowuje lokalną bazę i `.env`; token oraz baza nie trafiają na GitHub. Potrzebny jest Git for Windows i możliwość zalogowania do GitHuba. Na końcu otrzymasz SHA wysłanego commitu.
 
-Log `version: 1.0.0` w Railway potwierdza uruchomiony stary kod. Porównaj commit z logiem skryptu. W usłudze Railway naciśnij **Ctrl+K → Deploy Latest Commit**, aby wdrożyć najnowszy commit podłączonej gałęzi `main`, z Root Directory `/R3V0-Discord-Bot-v2`. Zwykłe **Redeploy** odtwarza kod wybranego starego wdrożenia. Po prawidłowym uruchomieniu nowy proces zapisze `version: 2.0.0`, a panel pojawi się na `1557384522713276488`.
+Jeżeli pliki są w innym folderze, podaj pełną ścieżkę skryptu oraz `-ZipPath "pełna ścieżka do ZIP-a"`. Alternatywnie rozpakuj projekt i uruchom dołączony `UPLOAD-GITHUB.ps1` z parametrem `-SourceDirectory` wskazującym folder zawierający `package.json`.
 
-Dokumentacja Railway: [Deployment Actions](https://docs.railway.com/deployments/deployment-actions), [GitHub Autodeploys](https://docs.railway.com/deployments/github-autodeploys), [Keyboard Shortcuts](https://docs.railway.com/overview/keyboard-shortcuts).
+W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.1.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
 
-### Standardowa aktualizacja z rozpakowanego folderu
+Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployment-actions), [GitHub Autodeploys](https://docs.railway.com/deployments/github-autodeploys), [Keyboard Shortcuts](https://docs.railway.com/overview/keyboard-shortcuts).
 
-Rozpakuj ZIP. Zawartość znajdującego się w nim folderu **GOAT-Clan-Bot** skopiuj do **C:\Users\zerqo\Desktop\GOAT-Clan-Bot**. Podmień kod, a zachowaj istniejący lokalny folder `data` oraz `.env`, jeśli używasz też wersji lokalnej.
-
-Otwórz PowerShell i wklej:
-
-```powershell
-cd "C:\Users\zerqo\Desktop\GOAT-Clan-Bot"
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\UPLOAD-GITHUB.ps1" -SourceDirectory "C:\Users\zerqo\Desktop\GOAT-Clan-Bot"
-```
-
-Potrzebny jest Git for Windows. Jeśli Git poprosi o logowanie, zaloguj się do swojego konta GitHub. Skrypt pobierze aktualną gałąź `main` z **Zerqoon/test3**, podmieni jej folder **R3V0-Discord-Bot-v2**, doda workflow sprawdzający ten podfolder i wykona zwykły commit oraz push. Pozostałe pliki repozytorium pozostaną zachowane. Token, lokalna baza i `node_modules` nie są wysyłane. Skrypt pracuje na tymczasowej kopii repozytorium; nie usuwa Twojej lokalnej bazy.
-
-Przed wysłaniem skrypt sprawdza wersję 2.x, pliki ticketów, obrazek aplikacji i włączenie ticketów w `config.json`. Wyświetla faktyczny folder źródłowy oraz wersję. Jeśli podmienisz tylko skrypt, zostawiając stare pliki bota, wysyłanie zostanie zatrzymane. Po udanym pushu pokazuje SHA commitu: właśnie ten commit powinien być wdrożony na Railway. W logu nowego procesu `GOAT ready` ma pole `version: 2.0.0`.
-
-Jeśli nie widać nowych funkcji, sprawdź na Discordzie `/ticket-panel`. Ta komenda występuje w nowym projekcie i publikuje / naprawia panel na skonfigurowanym kanale. Brak komendy może oznaczać uruchomiony starszy kod, brak rejestracji komend lub nieodświeżoną listę Discorda; porównaj commit i wersję w logu Railway. Jeżeli komenda istnieje, ale panel nie powstaje, odczytaj jej prywatny komunikat błędu i log `GOAT ticket panel needs attention` lub `GOAT ticket panel will retry` w Railway. Błąd dostępu albo niedostępny kanał Ticket Logs może zablokować publikację panelu.
-
-Na Railway pozostaw ten sam serwis i wolumen. Ustaw **Settings → Root Directory** na **`/R3V0-Discord-Bot-v2`**. Build Command i Start Command pozostaw puste — budowanie i uruchamianie obsługuje dołączony `Dockerfile`. Po pushu uruchom Deploy, jeśli automatyczne wdrażanie nie jest włączone.
-
-| Ustawienie | Wartość |
+| Railway | Ustawienie |
 | --- | --- |
-| `DISCORD_TOKEN` | Zachowaj token w Railway Variables |
+| Root Directory | `/R3V0-Discord-Bot-v2` |
+| Build / Start Command | Puste — używany jest dołączony Dockerfile |
+| `DISCORD_TOKEN` | Dotychczasowy token w Variables |
 | `DATABASE_PATH` | `/app/data/goat.sqlite` |
+| Volume | Zachowaj istniejący, Mount Path `/app/data` |
 | `RAILWAY_RUN_UID` | `0` |
-| Volume Mount Path | `/app/data` |
 | Replicas | `1` |
-| Serverless / usypianie | Wyłączone |
+| Serverless | Wyłączone |
 
-Baza jest aktualizowana automatycznie. Nie usuwaj starego wolumenu ani pliku SQLite. Statystyki, giveaway'e, zablokowane nicki i sprawy moderacyjne pozostają w tej bazie.
+Baza aktualizuje się automatycznie do schematu 3. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
 
-## Co zrobi bot po wdrożeniu
+## Ticket i głosowanie
 
-| Funkcja | Konfiguracja / działanie |
+Panel **Clan Application / Support** jest na `1557384522713276488`. Przed utworzeniem obu rodzajów ticketu pojawia się formularz wymagający Roblox **@username**, zamiast display name. Nazwa jest sprawdzana pod względem formatu; bot nie potwierdza własności konta Roblox.
+
+Jedna osoba może mieć **jeden aktywny ticket łącznie**, z przerwą **5 minut** i limitem **3 ticketów na godzinę**. Limit serwera wynosi **50 aktywnych ticketów**. Powtarzanie przycisków nie tworzy kolejnych kanałów. Formularze wygasają po 15 minutach; limity utworzeń działają po restarcie.
+
+Kanał jest prywatny od chwili utworzenia. Dostęp mają autor, dodani uczestnicy i skonfigurowana obsługa. Discord przyznaje osobom z Administrator i właścicielowi serwera dostęp niezależnie od nadpisań. Publiczny panel nie pokazuje ID ani ról uprawnionych osób.
+
+Aplikacja otrzymuje **jeden embed** z username i checklistą:
+
+1. Mastery z widocznym username jak na dołączonym przykładzie.
+2. Gamepasses.
+3. Inventory.
+4. Stats.
+
+Dla nowej aplikacji na `1557433699572777000` pojawia się Discord nickname, Roblox username oraz **Vote Yes / Vote No**. Głosowanie trwa **10 minut**, wymaga **minimum 3 głosów**, a większość Yes przyjmuje aplikację; większość No odrzuca. Pierwszy klik nie kończy głosowania. Remis lub zbyt mało głosów pozostawia ticket do ręcznej decyzji. Support służy prywatnej pomocy i nie jest objęty głosowaniem.
+
+Każdy członek serwera będący człowiekiem, poza aplikującym, ma jeden głos i może go zmienić. Głosy osób, które wyszły z serwera, są odrzucane podczas końcowego liczenia. `tickets.voting.voterRoleIds` pozwala ograniczyć głosowanie do wskazanych ról; bot sprawdza rolę przy kliknięciu i ponownie na końcu.
+
+**Approve / Reject** w tickecie oraz `/ticket-approve reason:...` i `/ticket-reject reason:...` są dostępne tylko skonfigurowanej administracji i osobistemu dostępowi właściciela. Uzasadnienie trafia do DM aplikującego. Decyzja automatyczna lub ręczna zamyka ticket do odczytu i wysyła angielski embed DM z wynikiem, powodem i wykonawcą. Zamknięte DM nie zatrzymują decyzji. Akceptacja nie nadaje automatycznie roli klanowej.
+
+Głosy, wynik, etap zamykania i dostarczenie DM są zapisane w SQLite. Po restarcie bot wznawia pracę. Zakończona decyzja nie jest losowana ani liczona ponownie. Niepewne wysyłki używają nonce Discorda; przy długiej awarii na granicy wysyłki i zapisu nadal może być potrzebne ręczne sprawdzenie DM.
+
+Starsze tickety dostają poprawiony wygląd. Te, które powstały przed formularzem i nie mają Roblox username, nie są automatycznie poddawane głosowaniu. Administracja może rozstrzygnąć je ręcznie.
+
+## Czytelne logi
+
+| Zdarzenia | Kanał |
 | --- | --- |
-| Autorola ludzi | `1552638283748737094`: brakująca rola jest nadawana obecnym ludziom oraz nowym osobom, z uwzględnieniem limitów API Discorda |
-| Przypomnienia | Wyłącznie osoby, które dołączą po pierwszym uruchomieniu wersji 2.0 i posiadają lub później dostaną rolę `718165098526670948` |
-| Kanał przypomnienia | `1556640581613260810`: tylko ping tej osoby i prośba o prawdziwy Roblox `@username`, zamiast display name |
-| Usuwanie przypomnienia | Po 60 sekundach; termin zapisany w SQLite, więc usuwanie działa także po restarcie |
-| Obecni członkowie | Dostają brakującą autorolę, bez zbiorczego pingowania o nicki |
-| Panel ticketów | `1557384522713276488`: **Clan Application** i **Support**, z dostarczonym logo GOAT |
-| Ticket Logs | `1557404763136721017`: otwarcie, przejęcie, zmiany uczestników, zamknięcie, ponowne otwarcie i usunięcie |
-| Logi ogólne | `1552635674790989865`: czytelne nazwy ustawień, uprawnienia opisane słownie i szczegóły działań ludzi |
-| Giveaway | Jeden publiczny przycisk wejścia, obowiązkowy wybór roli, ping tylko tej roli i sprawdzanie aktualnej roli uczestnika |
+| Usunięcia, edycje i GIF-y ze wszystkich kanałów, także ticketów | `1557439487813091358` |
+| Otwarcia, przejęcia, uczestnicy, zamknięcia i zapis rozmowy ticketów | `1557439533979803678` |
+| Dołączenia i wyjścia: Discord ID, data i wiek konta, data dołączenia / wyjścia | `1557439665378959491` |
+| Role, kanały, moderacja i pozostałe działania administracyjne | `1557440463974436956` |
 
-Bot nie wysyła osobnego logu każdej automatycznej autoroli, poprawki nicku ani utworzenia kanału ticketu w logach ogólnych. Po uzupełnieniu autoroli wysyła jedno podsumowanie. Logi pojawiają się z około 8-sekundowym opóźnieniem i grupują do pięciu embedów w jednej wiadomości; duże wpisy są rozdzielane według limitów Discorda. Powtarzający się raport importu oraz komunikaty online są domyślnie wyciszone. Długie szczegóły trafiają do pliku TXT, krótkie wpisy pozostają bez dodatkowych załączników. Kolejka logów i zamrożone grupy przetrwają restart.
+Log zamknięcia ticketu pokazuje powód, wynik, osoby, czas i **treść rozmowy bezpośrednio w embedzie**. Przy długiej rozmowie widać ostatnich osiem wiadomości; pełna chronologiczna historia jest w załączniku **TXT**, bez HTML. Zachowane są również usunięte wiadomości, które bot wcześniej zaobserwował. Linki do załączników Discorda mogą wygasnąć.
 
-Rola dopisku **` | GOAT`** jest nadal ustawiona osobno jako `nickname.roleId: 1552474081054564402`, zgodnie z wcześniejszą konfiguracją. Rola wymagana do przypomnienia jest w `usernameReminder.roleId`, a domyślna rola giveawayu w `giveaways.defaultRoleId`. Wszystkie ustawienia są w `config.json`.
+Logi grupują do pięciu embedów w jednej wiadomości po około 8 sekundach, w granicach limitów Discorda. Własne rutynowe autorole, poprawki nicków i operacje tworzenia ticketów nie wywołują osobnych logów administracyjnych. Dopisanie podglądu GIF-a nie powoduje dodatkowego logu edycji. Użytkowe wiadomości bota i jego logi nie generują pętli logowania.
 
-## Obsługa ticketów
-
-Kanał powstaje z prywatnymi uprawnieniami już w momencie utworzenia. Dostęp otrzymują autor ticketu, wskazani uczestnicy, skonfigurowana obsługa i Twój zapisany dostęp osobisty. Discord przyznaje właścicielowi serwera i osobom z **Administrator** dostęp niezależnie od nadpisanych uprawnień kanału.
-
-**Clan Application** otrzymuje dostarczony obrazek jako wzór oraz angielską listę: mastery z widocznym `@username`, gamepasses, inventory i stats. **Support** otrzymuje prośbę o opis problemu. Panel nie ujawnia ról obsługi ani osobistych ID dostępu.
-
-| Komenda / przycisk | Działanie |
+| Obsługa ticketów | Działanie |
 | --- | --- |
-| `/ticket-panel` | Opublikowanie lub naprawienie jednego panelu; ponowny start go nie duplikuje |
-| `/ticket-list` | Prywatna lista ostatnich ticketów dla obsługi |
-| `/ticket-add user:...` | Dodanie konkretnej osoby do aktualnego otwartego ticketu |
-| `/ticket-remove user:...` | Odebranie dodatkowego dostępu uczestnikowi |
-| **Claim** | Przejęcie przez obsługę; aktualny dostęp sprawdzany ponownie |
-| **Close** | Autor lub obsługa podaje powód w formularzu |
-| `/ticket-close reason:...` | Zamknięcie aktualnego ticketu przez obsługę |
-| **Reopen** | Ponowne otwarcie przez autora lub obsługę, jeżeli nie ma innego aktywnego ticketu tego typu |
-| **Delete** | Tylko obsługa, po zamknięciu i potwierdzonym dostarczeniu zapisu rozmowy do Ticket Logs |
-| `/ticket-repair` | Odtworzenie prywatnych uprawnień istniejących ticketów |
-| `/autorole-sync` | Ponowienie uzupełnienia roli ludzi |
+| `/ticket-panel`, `/ticket-list` | Naprawienie panelu / prywatna lista |
+| Claim | Przejęcie przez obsługę |
+| Close, `/ticket-close reason:...` | Zamknięcie z powodem; wycofanie aplikacji anuluje jej głosowanie |
+| Approve / Reject, `/ticket-approve`, `/ticket-reject` | Ręczna decyzja aplikacji |
+| `/ticket-add`, `/ticket-remove` | Zmiany dostępu konkretnej osoby |
+| Reopen | Ponowne otwarcie, gdy użytkownik nie ma innego aktywnego ticketu; po przyjęciu lub odrzuceniu tylko administracja |
+| Delete | Tylko administracja, po potwierdzonym dostarczeniu całej rozmowy do Ticket Logs |
+| `/ticket-repair` | Odtworzenie prywatnych uprawnień |
 
-Każda osoba może mieć jednocześnie jeden aktywny ticket aplikacyjny i jeden Support. Zamknięte kanały są tylko do odczytu. Zapis HTML obejmuje wszystkie dostępne strony wiadomości i usunięte wiadomości, które bot wcześniej zaobserwował. Pliki mogą być podzielone przy dużej rozmowie. Tekst jest zachowany w zapisie; linki do załączników Discorda mogą wygasnąć. Błąd odczytu rozmowy lub dostarczenia logu blokuje usunięcie kanału i uruchamia ponowienie zadania.
+Zamknięte kanały pozostają tylko do odczytu do czasu użycia Delete. Błąd odczytu rozmowy albo dostarczenia logu blokuje usunięcie. Komendy, przyciski i formularze administracyjne sprawdzają aktualne uprawnienia.
 
-Bot potrzebuje włączonych **Server Members Intent** i **Message Content Intent**. Jego najwyższa rola musi być powyżej nadawanej autoroli oraz odpowiednio powyżej osób, którym zmienia nicki lub nadaje timeouty. Szczegóły pełnej instalacji: `RAILWAY_SETUP_PL.md`.
+## Pozostałe systemy
+
+Autorola ludzi pozostaje `1552638283748737094`, dopisek ` | GOAT` używa roli `1552474081054564402`. Przypomnienie na `1556640581613260810` dotyczy tylko nowych osób z rolą `718165098526670948`, pinguje tę osobę i znika po 60 sekundach. Aktualizacja nie pinguje zbiorowo obecnych członków. Giveaway nadal ma obowiązkowy wybór roli, jeden publiczny przycisk wejścia i świeże sprawdzanie wymaganej roli.
+
+Bot wymaga **Server Members Intent** i **Message Content Intent**. Rola bota musi być powyżej nadawanych ról i osób, którym zmienia nickname lub timeout. Wszystkie ustawienia są w `config.json`. Pełna instalacja: `RAILWAY_SETUP_PL.md`; lokalna walidacja: `docs/VALIDATION.md`.

@@ -123,7 +123,32 @@ export class Store {
     const ticketColumns = this.sqlite.prepare('PRAGMA table_info(tickets)').all() as { name: string }[];
     if (!ticketColumns.some(column => column.name === 'permissions_dirty')) this.sqlite.exec('ALTER TABLE tickets ADD COLUMN permissions_dirty INTEGER NOT NULL DEFAULT 0');
     this.sqlite.exec("INSERT OR IGNORE INTO log_receipts(dedupe_key,message_id,sent_at) SELECT o.dedupe_key,b.message_id,o.sent_at FROM log_outbox o LEFT JOIN log_batches b ON b.id=o.batch_id WHERE o.status='sent' AND o.dedupe_key LIKE 'ticket-transcript:%'");
-    this.setMeta('schema_version', '2');
+    if (!ticketColumns.some(column => column.name === 'embed_dirty')) this.sqlite.exec('ALTER TABLE tickets ADD COLUMN embed_dirty INTEGER NOT NULL DEFAULT 0');
+    for (const name of ['roblox_username', 'owner_name']) {
+      if (!ticketColumns.some(column => column.name === name)) this.sqlite.exec(`ALTER TABLE tickets ADD COLUMN ${name} TEXT`);
+    }
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS ticket_requests (
+        id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL,
+        panel_message_id TEXT NOT NULL, expires_at INTEGER NOT NULL, ticket_id INTEGER REFERENCES tickets(id)
+      );
+      CREATE INDEX IF NOT EXISTS ticket_owner_time ON tickets(guild_id,owner_id,created_at);
+      CREATE TABLE IF NOT EXISTS ticket_reviews (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets(id), channel_id TEXT NOT NULL, message_id TEXT,
+        state TEXT NOT NULL DEFAULT 'voting', ends_at INTEGER NOT NULL, minimum_votes INTEGER NOT NULL,
+        voter_roles TEXT NOT NULL DEFAULT '[]', decision TEXT, decided_by TEXT, decided_at INTEGER,
+        reason TEXT, yes_count INTEGER NOT NULL DEFAULT 0, no_count INTEGER NOT NULL DEFAULT 0,
+        dirty INTEGER NOT NULL DEFAULT 1, last_update INTEGER NOT NULL DEFAULT 0,
+        dm_status TEXT NOT NULL DEFAULT 'pending', dm_attempts INTEGER NOT NULL DEFAULT 0,
+        retry_at INTEGER NOT NULL DEFAULT 0, error TEXT
+      );
+      CREATE TABLE IF NOT EXISTS ticket_votes (
+        ticket_id INTEGER NOT NULL REFERENCES tickets(id), user_id TEXT NOT NULL,
+        choice TEXT NOT NULL CHECK(choice IN ('yes','no')), voted_at INTEGER NOT NULL,
+        PRIMARY KEY(ticket_id,user_id)
+      );
+    `);
+    this.setMeta('schema_version', '3');
   }
   private statement(sql: string): StatementSync {
     let s = this.statements.get(sql);

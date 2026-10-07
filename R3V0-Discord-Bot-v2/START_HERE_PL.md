@@ -1,4 +1,4 @@
-# GOAT 2.0 — uruchomienie
+# GOAT 2.1 — uruchomienie
 
 Projekt jest przygotowany dla Twojego serwera. Kanały, rola klanu, dwie role administracji oraz Twój osobisty dostęp są już wpisane w `config.json`. Cały interfejs bota jest po angielsku.
 
@@ -40,6 +40,7 @@ Nie musisz wpisywać ID serwera — bot rozpozna je po kanale z nickami. `GUILD_
 | `/autorole-sync` | Uzupełnienie roli wszystkich ludzi |
 | `/ticket-panel`, `/ticket-list` | Panel i prywatna lista ticketów |
 | `/ticket-add user:...`, `/ticket-remove user:...` | Dostęp konkretnej osoby do aktualnego ticketu |
+| `/ticket-approve reason:...`, `/ticket-reject reason:...` | Ręczna decyzja aplikacji do klanu, zamknięcie i DM |
 | `/ticket-close reason:...`, `/ticket-repair` | Zamknięcie lub naprawienie prywatnych uprawnień |
 
 Obsługiwane czasy: `1s`, `10s`, `1m`, `1 minute`, `30 minutes`, `1h 30m`, `1 day`, `1w`. Bot odrzuca niepoprawne wartości zamiast zgadywać jednostkę.

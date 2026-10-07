@@ -59,6 +59,8 @@ export const commandDefinitions = [
     .addUserOption(option => option.setName('user').setDescription('Member to remove').setRequired(true)),
   new SlashCommandBuilder().setName('ticket-close').setDescription('Close the current GOAT ticket and save its transcript')
     .addStringOption(option => option.setName('reason').setDescription('Closing reason').setRequired(true).setMaxLength(1000)),
+  ...['ticket-approve', 'ticket-reject'].map(name => new SlashCommandBuilder().setName(name).setDescription(name === 'ticket-approve' ? 'Accept the current clan application and notify the applicant' : 'Reject the current clan application and notify the applicant')
+    .addStringOption(option => option.setName('reason').setDescription('Reason included in the applicant DM').setRequired(true).setMaxLength(1000))),
   new SlashCommandBuilder().setName('ticket-repair').setDescription('Restore configured privacy permissions for GOAT tickets'),
   new SlashCommandBuilder().setName('welcome-preview').setDescription('Preview the GOAT welcome card privately'),
   new SlashCommandBuilder().setName('goat-status').setDescription('View GOAT health, queued logs and database status'),

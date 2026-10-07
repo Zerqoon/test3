@@ -3,14 +3,24 @@
   "timezone": "Europe/Warsaw",
   "channels": {
     "usernames": "1556640581613260810",
-    "logs": "1552635674790989865",
-    "welcome": "1552477494786138262"
+    "logs": "1557440463974436956",
+    "welcome": "1552477494786138262",
+    "messageLogs": "1557439487813091358",
+    "memberLogs": "1557439665378959491"
   },
   "access": {
-    "staffRoleIds": ["1552473635271352451", "1552473673221283901"],
-    "ownerUserIds": ["1488470377993736234"]
+    "staffRoleIds": [
+      "1552473635271352451",
+      "1552473673221283901"
+    ],
+    "ownerUserIds": [
+      "1488470377993736234"
+    ]
   },
-  "nickname": { "roleId": "1552474081054564402", "suffix": " | GOAT" },
+  "nickname": {
+    "roleId": "1552474081054564402",
+    "suffix": " | GOAT"
+  },
   "usernames": {
     "convertExistingOnStartup": true,
     "logLiveConversions": false,
@@ -32,15 +42,37 @@
     "ignoreRoutineBotActions": true,
     "logSystemOnline": false
   },
-  "giveaways": { "maxDurationDays": 365, "maxWinners": 20, "defaultRoleId": "718165098526670948" },
-  "autorole": { "enabled": true, "roleId": "1552638283748737094", "syncExistingOnStartup": true },
-  "usernameReminder": { "enabled": true, "roleId": "718165098526670948", "deleteAfterSeconds": 60 },
+  "giveaways": {
+    "maxDurationDays": 365,
+    "maxWinners": 20,
+    "defaultRoleId": "718165098526670948"
+  },
+  "autorole": {
+    "enabled": true,
+    "roleId": "1552638283748737094",
+    "syncExistingOnStartup": true
+  },
+  "usernameReminder": {
+    "enabled": true,
+    "roleId": "718165098526670948",
+    "deleteAfterSeconds": 60
+  },
   "tickets": {
     "enabled": true,
     "panelChannelId": "1557384522713276488",
-    "logChannelId": "1557404763136721017",
+    "logChannelId": "1557439533979803678",
     "categoryId": null,
-    "maxParticipants": 20
+    "maxParticipants": 20,
+    "cooldownSeconds": 300,
+    "maxTicketsPerHour": 3,
+    "maxOpenTickets": 50,
+    "voting": {
+      "enabled": true,
+      "channelId": "1557433699572777000",
+      "durationSeconds": 600,
+      "minimumVotes": 3,
+      "voterRoleIds": []
+    }
   },
   "autoRegisterCommands": true
 }

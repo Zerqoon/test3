@@ -1,3 +1,4 @@
+import { VERSION } from './core/version.js';
 import { Client, Events, GatewayIntentBits, Partials, ActivityType, REST, Routes, Options } from 'discord.js';
 import pino from 'pino';
 import { assertPersistentDatabase, config, env, requireToken } from './core/config.js';
@@ -98,8 +99,8 @@ client.once(Events.ClientReady, ready => {
     const activeContext = ctx;
     void ctx.nicknames.syncAll(false).catch(err => logger.warn({ error: errorText(err) }, 'GOAT initial nickname sync failed'));
     if (config.logging.logSystemOnline) activeContext.logs.enqueue({ embeds: [goatEmbed('System Online', colors.green).setDescription('GOAT is online. Persistent jobs have resumed.')
-      .addFields({ name: 'Version', value: '2.0.0' }).toJSON()] }, `online:${Date.now()}`);
-    logger.info({ guildId: guild.id, version: '2.0.0' }, 'GOAT ready');
+      .addFields({ name: 'Version', value: VERSION }).toJSON()] }, `online:${Date.now()}`);
+    logger.info({ guildId: guild.id, version: VERSION }, 'GOAT ready');
   })().catch(err => { logger.fatal({ error: errorText(err) }, 'GOAT startup failed'); void shutdown(1); });
 });
 client.login(env.token).catch(err => { logger.fatal({ error: errorText(err) }, 'GOAT login failed; check DISCORD_TOKEN and privileged intents'); void shutdown(1); });

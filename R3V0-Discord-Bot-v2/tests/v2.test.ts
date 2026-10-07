@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,18 +7,21 @@ import { join } from 'node:path';
 import pino from 'pino';
 import { AuditLogEvent, ChannelType, Collection, PermissionsBitField, PermissionFlagsBits,
   type APIEmbed, type ButtonInteraction, type GuildAuditLogsEntry, type GuildMember, type Message,
-  type MessageCreateOptions, type OverwriteData } from 'discord.js';
+  type MessageCreateOptions, type ModalSubmitInteraction, type OverwriteData } from 'discord.js';
 import { config } from '../src/core/config.js';
 import { Store } from '../src/core/store.js';
-import type { Context, MessageSnapshot } from '../src/core/types.js';
+import type { Context } from '../src/core/types.js';
 import { snapshotMessage } from '../src/core/messages.js';
 import { LogService, embedCharacters } from '../src/services/logs.js';
 import { AuditService } from '../src/services/audit.js';
 import { formatAuditChanges } from '../src/services/audit-format.js';
 import { MemberService, usernameReminderText } from '../src/services/members.js';
-import { TicketService, ticketOverwrites, ticketPanel, applicationRequirements } from '../src/services/tickets.js';
+import { TicketService, ticketOverwrites, ticketPanel, applicationRequirements, normalizeRobloxUsername } from '../src/services/tickets.js';
 import { captureTranscript, transcriptDocument } from '../src/services/transcripts.js';
 import { GiveawayService, giveawayButtons } from '../src/services/giveaways.js';
+import { majorityDecision, type TicketReview } from '../src/services/ticket-votes.js';
+import { installEvents } from '../src/events/install.js';
+import { VERSION } from '../src/core/version.js';
 import { maintain } from '../src/services/maintenance.js';
 
 const GUILD = '1550000000000000100', ALICE = '1550000000000000101', BOB = '1550000000000000102',
@@ -29,14 +33,17 @@ const json = <T>(value: T): T => (value && typeof value === 'object' && 'toJSON'
 function fixture() {
   const db = new Store(':memory:'); const settings = structuredClone(config); settings.logging.batchWindowMs = 0;
   const ctx = { db, config: settings, logger: pino({ level: 'silent' }), stopping: false,
-    client: { user: { id: BOT }, users: { fetch: async () => ({ send: async () => {} }) } } } as unknown as Context;
+    client: Object.assign(new EventEmitter(), { user: { id: BOT }, users: { fetch: async (id: string) => ({ send: async (payload: MessageCreateOptions) => {
+      if (dmError !== undefined) throw Object.assign(new Error('DM failure'), { code: dmError }); dms.push({ userId: id, payload });
+    } }) } }) } as unknown as Context;
   const members = new Collection<string, GuildMember>(); const channels = new Collection<string, ReturnType<typeof makeChannel>>();
   const sent: { channelId: string; payload: MessageCreateOptions }[] = [], roleAdds: string[] = [], deletes: string[] = [];
+  const dms: { userId: string; payload: MessageCreateOptions }[] = []; let dmError: number | undefined;
   let serial = 1550000000000100000n, failSend = false, failHistory = false, rolePosition = 1, failPermissions = false;
   function addMember(id: string, roles: string[] = [], bot = false, joined = Date.now() - 86400000) {
     const cache = new Collection(roles.map(role => [role, { id: role }]));
     const member = { id, joinedTimestamp: joined, displayName: id === ALICE ? 'Stormy' : 'GOAT Member', displayAvatarURL: avatar,
-      user: { id, bot, username: `user_${id}`, displayName: 'GOAT Member', displayAvatarURL: avatar },
+      user: { id, bot, createdTimestamp: Date.now() - 365 * 86400000, username: `user_${id}`, displayName: 'GOAT Member', displayAvatarURL: avatar },
       roles: { cache, add: async (role: string) => { roleAdds.push(id); cache.set(role, { id: role }); return member; } }
     } as unknown as GuildMember;
     members.set(id, member); return member;
@@ -106,7 +113,7 @@ function fixture() {
   ctx.guild = guild as unknown as Context['guild'];
   addMember(ALICE); addMember(BOB); addMember(BOT, [], true); addMember(STAFF, [settings.access.staffRoleIds[0]]);
   addMember(settings.access.ownerUserIds[0]);
-  for (const id of [settings.channels.logs, settings.channels.usernames, settings.tickets.logChannelId, settings.tickets.panelChannelId]) makeChannel(id);
+  for (const id of [settings.channels.logs, settings.channels.usernames, settings.channels.messageLogs, settings.channels.memberLogs, settings.tickets.logChannelId, settings.tickets.panelChannelId, settings.tickets.voting.channelId]) makeChannel(id);
   ctx.logs = new LogService(ctx); ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx);
   ctx.audit = new AuditService(ctx); ctx.giveaways = new GiveawayService(ctx);
   function interaction(userId = ALICE, channelId = settings.tickets.panelChannelId, messageId = db.meta('ticket_panel_message_id')) {
@@ -116,13 +123,29 @@ function fixture() {
       reply: async (payload: unknown) => { replies.push(payload); }, showModal: async (payload: unknown) => { replies.push(payload); }
     } as unknown as ButtonInteraction;
   }
+  async function form(kind: 'application' | 'support', userId = ALICE, username = 'Stormy_123') {
+    const button = interaction(userId); await ctx.tickets.open(button, kind);
+    const replies = (button as unknown as { replies: { toJSON(): { custom_id: string } }[] }).replies;
+    const customId = replies[0].toJSON().custom_id;
+    const modal = Object.assign(interaction(userId), { customId, fields: { getTextInputValue: () => username } }) as unknown as ModalSubmitInteraction;
+    return { modal, requestId: customId.split(':')[3] };
+  }
+  async function openTicket(kind: 'application' | 'support', userId = ALICE, username = 'Stormy_123') {
+    const request = await form(kind, userId, username); await ctx.tickets.openModal(request.modal, request.requestId);
+    const ticket = ctx.db.get<{ id: number }>('SELECT id FROM tickets WHERE owner_id=? ORDER BY id DESC LIMIT 1', userId)!;
+    return ctx.tickets.get(ticket.id);
+  }
+  function voteInteraction(userId: string, id = 1) {
+    const review = ctx.tickets.votes.get(id)!; return interaction(userId, review.channel_id, review.message_id!);
+  }
   function original(channelId: string, index: number, content = `Human message ${index}`) {
     return { id: String(1550000000001000000n + BigInt(index)), guildId: GUILD, channelId, webhookId: null,
       createdTimestamp: Date.now() - (1000 - index) * 1000, editedTimestamp: null, content,
       author: members.get(ALICE)!.user, member: members.get(ALICE), embeds: [], attachments: new Collection(), stickers: new Collection(), components: []
     } as unknown as Message;
   }
-  return { ctx, members, channels, sent, deletes, roleAdds, interaction, original, addMember,
+  return { ctx, members, channels, sent, deletes, roleAdds, dms, interaction, original, addMember, form, openTicket, voteInteraction,
+    setDmError: (code?: number) => { dmError = code; },
     setSendFailure: (value: boolean) => { failSend = value; }, setHistoryFailure: (value: boolean) => { failHistory = value; },
     setRolePosition: (value: number) => { rolePosition = value; }, setPermissionFailure: (value: boolean) => { failPermissions = value; } };
 }
@@ -236,25 +259,26 @@ test('ticket overwrites deny outsiders and grant only opener, invited members, s
 
 test('ticket panel and application checklist include the supplied branding and four screenshots', () => {
   const panel = ticketPanel(); assert.deepEqual(panel.components[0].toJSON().components.map(component => 'label' in component ? component.label : ''), ['Clan Application', 'Support']);
-  assert.equal(panel.embeds[0].toJSON().image?.url, 'attachment://goat-banner.png');
+  assert.equal(panel.embeds[0].toJSON().thumbnail?.url, 'attachment://goat-banner.png');
   const requirements = applicationRequirements().toJSON(); assert.equal(requirements.image?.url, 'attachment://application-mastery-example.png');
-  for (const phrase of ['Mastery screenshot', 'Gamepasses screenshot', 'Inventory screenshot', 'Stats screenshot', '@username']) assert.ok(requirements.description?.includes(phrase));
+  for (const phrase of ['Mastery', 'Gamepasses', 'Inventory', 'Stats', '@username']) assert.ok(requirements.description?.includes(phrase));
   for (const id of [...config.access.staffRoleIds, ...config.access.ownerUserIds]) assert.ok(!JSON.stringify(panel).includes(id));
 });
 
 test('double ticket clicks create one private channel, retain the supplied image, and panel restart creates no duplicate', async () => {
   const f = fixture(); await f.ctx.tickets.ensurePanel();
-  await Promise.all([f.ctx.tickets.open(f.interaction(), 'application'), f.ctx.tickets.open(f.interaction(), 'application')]);
+  const request = await f.form('application');
+  await Promise.all([f.ctx.tickets.openModal(request.modal, request.requestId), f.ctx.tickets.openModal(request.modal, request.requestId)]);
   const ticket = f.ctx.db.get<{ id: number; channel_id: string }>('SELECT * FROM tickets')!;
   assert.equal(f.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM tickets')!.n, 1);
-  const intro = f.sent.find(record => record.channelId === ticket.channel_id)!; assert.equal(intro.payload.embeds?.length, 2); assert.equal(intro.payload.files?.length, 2);
+  const intro = f.sent.find(record => record.channelId === ticket.channel_id)!; assert.equal(intro.payload.embeds?.length, 1); assert.equal(intro.payload.files?.length, 1);
   assert.deepEqual(intro.payload.allowedMentions?.users, [ALICE]); const sends = f.sent.length;
   f.ctx.tickets = new TicketService(f.ctx); await f.ctx.tickets.ensurePanel(); assert.equal(f.sent.length, sends);
   assert.ok(f.channels.get(ticket.channel_id)!.overwrites.some(row => row.id === GUILD && row.deny === PermissionFlagsBits.ViewChannel)); f.ctx.db.close();
 });
 
 test('fresh staff checks reject role loss, retain owner fallback, and restrict invited users from claiming tickets', async () => {
-  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.ctx.tickets.open(f.interaction(), 'support');
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('support');
   const ticket = f.ctx.tickets.get(1); assert.equal(f.sent.find(record => record.channelId === ticket.channel_id)?.payload.embeds?.length, 1);
   await assert.rejects(f.ctx.tickets.button(f.interaction(BOB, ticket.channel_id!), 'claim', '1'), /restricted/);
   f.members.get(STAFF)!.roles.cache.clear(); await assert.rejects(f.ctx.tickets.button(f.interaction(STAFF, ticket.channel_id!), 'claim', '1'), /restricted/);
@@ -264,7 +288,7 @@ test('fresh staff checks reject role loss, retain owner fallback, and restrict i
 });
 
 test('failed participant permission updates are repaired from durable desired state', async () => {
-  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.ctx.tickets.open(f.interaction(), 'support'); const ticket = f.ctx.tickets.get(1);
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('support'); const ticket = f.ctx.tickets.get(1);
   f.setPermissionFailure(true); await assert.rejects(f.ctx.tickets.participant(ticket.channel_id!, BOB, STAFF, false));
   assert.equal(f.ctx.tickets.get(1).permissions_dirty, 1); f.setPermissionFailure(false);
   await f.ctx.tickets.tick(); assert.equal(f.ctx.tickets.get(1).permissions_dirty, 0);
@@ -272,20 +296,20 @@ test('failed participant permission updates are repaired from durable desired st
   await f.ctx.tickets.participant(ticket.channel_id!, BOB, STAFF, true); assert.ok(!f.channels.get(ticket.channel_id!)!.overwrites.some(row => row.id === BOB)); f.ctx.db.close();
 });
 
-test('transcripts paginate all messages, retain observed deletions, and escape untrusted HTML', async () => {
+test('plain text conversations paginate all messages and preserve observed deletions and exact user content', async () => {
   const f = fixture(); const channel = f.channels.get(f.ctx.config.channels.usernames)!;
   for (let index = 1; index <= 205; index++) { const message = f.original(channel.id, index); channel.messageCache.set(message.id, message); }
   const removed = snapshotMessage(f.original(channel.id, 206, '<script>alert(1)</script>'));
   f.ctx.db.recordMessage(removed, 'live'); f.ctx.db.run('UPDATE messages SET deleted_at=? WHERE id=?', Date.now(), removed.id);
   const files = await captureTranscript(f.ctx, channel as unknown as Context['guild']['systemChannel'] & {}, 99, 'test');
-  const html = Buffer.from(files[0].base64, 'base64').toString('utf8'); assert.equal((html.match(/<article>/g) ?? []).length, 206);
-  assert.match(html, /Deleted after observation/); assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/); assert.doesNotMatch(html, /<script>/);
-  const attack = { ...removed, attachments: [{ id: '1', url: 'javascript:alert(1)', name: '<img onerror=alert(1)>', size: 1, contentType: null }] } as MessageSnapshot;
-  const attackHtml = transcriptDocument('test', 'metadata', [attack]); assert.doesNotMatch(attackHtml, /href="javascript:|<img/); assert.match(attackHtml, /Content-Security-Policy/); f.ctx.db.close();
+  const text = Buffer.from(files[0].base64, 'base64').toString('utf8'); assert.equal((text.match(/User ID:/g) ?? []).length, 206);
+  assert.ok(files.every(file => file.name.endsWith('.txt'))); assert.match(text, /Deleted after observation/);
+  assert.match(text, /<script>alert\(1\)<\/script>/); assert.doesNotMatch(text, /<!doctype html>/);
+  const document = transcriptDocument('GOAT Ticket', 'metadata', [removed]); assert.match(document, /@user_/); f.ctx.db.close();
 });
 
 test('ticket close retries safely after transcript failure and delete waits for confirmed delivery', async () => {
-  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.ctx.tickets.open(f.interaction(), 'application'); const ticket = f.ctx.tickets.get(1);
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); const ticket = f.ctx.tickets.get(1);
   f.setHistoryFailure(true); await assert.rejects(f.ctx.tickets.close(1, STAFF, 'Review completed'));
   assert.equal(f.ctx.tickets.get(1).state, 'closing'); assert.ok(f.channels.has(ticket.channel_id!));
   f.setHistoryFailure(false); f.ctx.tickets = new TicketService(f.ctx); await f.ctx.tickets.tick(); assert.equal(f.ctx.tickets.get(1).state, 'closed');
@@ -318,5 +342,225 @@ test('legacy database migration preserves activity totals while adding log and t
   db.recordMessage(snapshot, 'live'); db.run('ALTER TABLE log_outbox DROP COLUMN batch_id'); db.close();
   const migrated = new Store(file); assert.equal(migrated.count(GUILD, ALICE), 1);
   assert.ok(migrated.all<{ name: string }>('PRAGMA table_info(log_outbox)').some(column => column.name === 'batch_id'));
-  assert.equal(migrated.meta('schema_version'), '2'); migrated.close(); rmSync(path, { recursive: true, force: true });
+  assert.equal(migrated.meta('schema_version'), '3'); migrated.close(); rmSync(path, { recursive: true, force: true });
+});
+
+test('Roblox form requires a real username shape and cannot create a channel before submission', async () => {
+  for (const input of [' ab ', 'display name', '@_Stormy', 'Stormy_', 'a__b', 'a'.repeat(21), '<@123>']) assert.throws(() => normalizeRobloxUsername(input));
+  assert.equal(normalizeRobloxUsername(' @Stormy_123 '), 'Stormy_123');
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const form = await f.form('application');
+  assert.equal(f.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM tickets')!.n, 0);
+  assert.ok(![...f.channels.values()].some(channel => channel.name.startsWith('clan-')));
+  const impostor = Object.assign(f.interaction(BOB), { fields: { getTextInputValue: () => 'ValidName' } }) as unknown as ModalSubmitInteraction;
+  await assert.rejects(f.ctx.tickets.openModal(impostor, form.requestId), /expired/);
+  await f.ctx.tickets.openModal(form.modal, form.requestId); assert.equal(f.ctx.tickets.get(1).roblox_username, 'Stormy_123');
+  assert.equal(f.ctx.tickets.get(1).owner_name, 'Stormy'); f.ctx.db.close();
+});
+
+test('tickets enforce one active ticket across categories, reject rapid forms and retain cooldown after restart', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const request = await f.form('support');
+  await assert.rejects(f.ctx.tickets.open(f.interaction(), 'application'), /few seconds/);
+  await f.ctx.tickets.openModal(request.modal, request.requestId);
+  await f.ctx.tickets.open(f.interaction(), 'application'); assert.equal(f.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM tickets')!.n, 1);
+  await f.ctx.tickets.close(1, STAFF, 'Complete'); f.ctx.tickets = new TicketService(f.ctx);
+  await assert.rejects(f.ctx.tickets.open(f.interaction(), 'support'), /Wait/);
+  assert.equal(f.ctx.tickets.get(1).state, 'closed'); f.ctx.db.close();
+});
+
+test('expired forms, invalid usernames and departed applicants cannot create tickets', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const request = await f.form('application', ALICE, 'Fake Display Name');
+  await assert.rejects(f.ctx.tickets.openModal(request.modal, request.requestId), /@username/);
+  f.ctx.db.run('UPDATE ticket_requests SET expires_at=0'); await assert.rejects(f.ctx.tickets.openModal(request.modal, request.requestId), /expired/);
+  const second = await f.form('support', BOB); f.members.delete(BOB); await assert.rejects(f.ctx.tickets.openModal(second.modal, second.requestId), /Unknown member/);
+  assert.equal(f.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM tickets')!.n, 0); f.ctx.db.close();
+});
+
+test('hourly and server-wide ticket limits are checked before channel creation', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); f.ctx.config.tickets.maxOpenTickets = 1;
+  await f.openTicket('support'); await assert.rejects(f.ctx.tickets.open(f.interaction(BOB), 'support'), /queue is full/);
+  await f.ctx.tickets.close(1, STAFF, 'Complete'); f.ctx.config.tickets.cooldownSeconds = 0; f.ctx.config.tickets.maxTicketsPerHour = 1;
+  await assert.rejects(f.ctx.tickets.open(f.interaction(), 'application'), /hourly/); f.ctx.db.close();
+});
+
+test('application ballots are published on the requested channel with the applicant nickname; support has no ballot', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  const review = f.ctx.tickets.votes.get(1)!; assert.equal(review.channel_id, '1557433699572777000'); assert.ok(review.message_id);
+  const message = f.sent.find(record => record.channelId === review.channel_id)!; const embed = json(message.payload.embeds![0]) as APIEmbed;
+  assert.match(embed.title!, /Stormy/); assert.match(embed.description!, /@Stormy_123/);
+  const row = json(message.payload.components![0]) as { components: { label: string }[] };
+  assert.deepEqual(row.components.map(button => button.label), ['Vote Yes', 'Vote No']);
+  assert.ok(!JSON.stringify(message.payload).includes(f.ctx.config.access.staffRoleIds[0]));
+  await f.openTicket('support', BOB, 'OtherPlayer'); assert.equal(f.ctx.tickets.votes.get(2), undefined); f.ctx.db.close();
+});
+
+test('votes persist once per member, can be changed, and never close early on the first click', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(ALICE), 1, 'yes'), /own application/);
+  await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(BOT), 1, 'yes'), /Bots/);
+  await f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'yes'); await f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'yes');
+  assert.equal(f.ctx.tickets.votes.get(1)!.yes_count, 1); assert.equal(f.ctx.tickets.get(1).state, 'open');
+  await f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'no');
+  assert.equal(f.ctx.tickets.votes.get(1)!.yes_count, 0); assert.equal(f.ctx.tickets.votes.get(1)!.no_count, 1);
+  assert.equal(f.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM ticket_votes')!.n, 1);
+  f.ctx.tickets = new TicketService(f.ctx); assert.equal(f.ctx.tickets.votes.get(1)!.no_count, 1);
+  await f.ctx.tickets.votes.tick(); assert.equal(f.ctx.tickets.get(1).state, 'open'); f.ctx.db.close();
+});
+
+async function expiredBallot(f: ReturnType<typeof fixture>, choices: ('yes' | 'no')[]) {
+  await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  const people = [BOB, STAFF, f.ctx.config.access.ownerUserIds[0]];
+  for (let i = 0; i < choices.length; i++) await f.ctx.tickets.votes.vote(f.voteInteraction(people[i]), 1, choices[i]);
+  f.ctx.db.run('UPDATE ticket_reviews SET ends_at=?,last_update=0', Date.now() - 1);
+}
+
+test('strict Yes majority after the deadline accepts, closes and sends one branded DM across restart', async () => {
+  const f = fixture(); await expiredBallot(f, ['yes', 'yes', 'no']); await f.ctx.tickets.votes.tick();
+  const review = f.ctx.tickets.votes.get(1)!; assert.equal(review.state, 'accepted'); assert.equal(review.decision, 'accepted');
+  assert.equal(f.ctx.tickets.get(1).state, 'closed'); assert.equal(review.dm_status, 'sent'); assert.equal(f.dms.length, 1);
+  assert.equal(f.dms[0].userId, ALICE); assert.match((json(f.dms[0].payload.embeds![0]) as APIEmbed).title!, /Accepted/);
+  f.ctx.tickets = new TicketService(f.ctx); await f.ctx.tickets.tick(); await f.ctx.tickets.votes.tick(); assert.equal(f.dms.length, 1);
+  const log = f.ctx.db.get<{ payload: string }>("SELECT payload FROM log_outbox WHERE dedupe_key LIKE 'ticket-transcript:%'")!;
+  const payload = JSON.parse(log.payload) as { embeds: APIEmbed[]; files: { name: string }[] };
+  assert.match(payload.embeds[0].title!, /Accepted/); assert.ok(payload.files.every(file => file.name.endsWith('.txt'))); f.ctx.db.close();
+});
+
+test('strict No majority rejects and DMs the applicant; decided tickets cannot be reopened by their owner', async () => {
+  const f = fixture(); await expiredBallot(f, ['no', 'yes', 'no']); await f.ctx.tickets.votes.tick();
+  assert.equal(f.ctx.tickets.votes.get(1)!.state, 'rejected'); assert.match((json(f.dms[0].payload.embeds![0]) as APIEmbed).title!, /Rejected/);
+  await assert.rejects(f.ctx.tickets.button(f.interaction(ALICE, f.ctx.tickets.get(1).channel_id!), 'reopen', '1'), /restricted/); f.ctx.db.close();
+});
+
+test('ties and insufficient turnout await manual review without closing or sending a decision DM', async () => {
+  for (const choices of [['yes', 'no'], ['yes']] as ('yes' | 'no')[][]) {
+    const f = fixture(); await expiredBallot(f, choices); await f.ctx.tickets.votes.tick();
+    assert.equal(f.ctx.tickets.votes.get(1)!.state, 'review'); assert.equal(f.ctx.tickets.get(1).state, 'open'); assert.equal(f.dms.length, 0);
+    await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'no'), /ended/); f.ctx.db.close();
+  }
+  assert.equal(majorityDecision(2, 2, 3), null); assert.equal(majorityDecision(2, 1, 3), 'accepted');
+});
+
+test('vote role requirements and server membership are checked again at final counting', async () => {
+  const f = fixture(); const role = f.ctx.config.nickname.roleId; f.ctx.config.tickets.voting.voterRoleIds = [role];
+  await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'yes'), /requirement/);
+  for (const person of [BOB, STAFF, f.ctx.config.access.ownerUserIds[0]]) {
+    f.members.get(person)!.roles.cache.set(role, { id: role } as never); await f.ctx.tickets.votes.vote(f.voteInteraction(person), 1, 'yes');
+  }
+  f.members.get(BOB)!.roles.cache.delete(role); f.members.delete(STAFF);
+  f.ctx.db.run('UPDATE ticket_reviews SET ends_at=?,last_update=0', Date.now() - 1); await f.ctx.tickets.votes.tick();
+  assert.equal(f.ctx.tickets.votes.get(1)!.yes_count, 1); assert.equal(f.ctx.tickets.votes.get(1)!.state, 'review'); assert.equal(f.dms.length, 0); f.ctx.db.close();
+});
+
+test('manual approval requires fresh staff access for buttons and submitted modals, including owner fallback', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); const channelId = f.ctx.tickets.get(1).channel_id!;
+  await assert.rejects(f.ctx.tickets.button(f.interaction(ALICE, channelId), 'approve', '1'), /restricted/i);
+  await f.ctx.tickets.button(f.interaction(STAFF, channelId), 'approve', '1'); f.members.get(STAFF)!.roles.cache.clear();
+  const submission = Object.assign(f.interaction(STAFF, channelId), { fields: { getTextInputValue: () => 'Requirements met.' } }) as unknown as ModalSubmitInteraction;
+  await assert.rejects(f.ctx.tickets.votes.submitDecision(submission, 1, 'accepted'), /restricted/i);
+  const ownerSubmission = Object.assign(f.interaction(f.ctx.config.access.ownerUserIds[0], channelId), { fields: { getTextInputValue: () => 'Requirements met.' } }) as unknown as ModalSubmitInteraction;
+  await f.ctx.tickets.votes.submitDecision(ownerSubmission, 1, 'accepted'); assert.equal(f.ctx.tickets.get(1).state, 'closed'); assert.equal(f.dms.length, 1);
+  assert.equal(f.ctx.tickets.votes.get(1)!.decided_by, f.ctx.config.access.ownerUserIds[0]); f.ctx.db.close();
+});
+
+test('decision, closure and DM recover after a history failure without repeating the decision', async () => {
+  const f = fixture(); await expiredBallot(f, ['yes', 'yes', 'no']); f.setHistoryFailure(true); await f.ctx.tickets.votes.tick();
+  assert.equal(f.ctx.tickets.votes.get(1)!.state, 'deciding'); assert.equal(f.ctx.tickets.get(1).state, 'closing'); assert.equal(f.dms.length, 0);
+  f.setHistoryFailure(false); f.ctx.tickets = new TicketService(f.ctx);
+  f.ctx.db.run('UPDATE ticket_reviews SET retry_at=0'); await f.ctx.tickets.tick();
+  assert.equal(f.ctx.tickets.get(1).state, 'closed'); assert.equal(f.ctx.tickets.votes.get(1)!.state, 'accepted'); assert.equal(f.dms.length, 1); f.ctx.db.close();
+});
+
+test('closed DMs are recorded quietly and transient DM failures retry without preventing ticket closure', async () => {
+  for (const code of [50007, 0]) {
+    const f = fixture(); await expiredBallot(f, ['no', 'no', 'yes']); f.setDmError(code); await f.ctx.tickets.votes.tick();
+    assert.equal(f.ctx.tickets.get(1).state, 'closed'); assert.equal(f.ctx.tickets.votes.get(1)!.dm_status, code === 50007 ? 'unavailable' : 'pending');
+    f.setDmError(); f.ctx.db.run('UPDATE ticket_reviews SET retry_at=0'); await f.ctx.tickets.votes.tick();
+    assert.equal(f.dms.length, code === 50007 ? 0 : 1); assert.equal(f.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM log_outbox WHERE dedupe_key LIKE 'ticket-transcript:%'")!.n, 1); f.ctx.db.close();
+  }
+});
+
+test('missing vote panels are restored once and forged message buttons cannot vote', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  const review = f.ctx.tickets.votes.get(1)!; await assert.rejects(f.ctx.tickets.votes.vote(f.interaction(BOB, review.channel_id, '1550000000009999999'), 1, 'yes'), /current/);
+  f.channels.get(review.channel_id)!.messageCache.delete(review.message_id!); f.ctx.db.run('UPDATE ticket_reviews SET dirty=1,last_update=0');
+  f.ctx.tickets = new TicketService(f.ctx); await f.ctx.tickets.votes.tick(); const updated = f.ctx.tickets.votes.get(1)!;
+  assert.notEqual(updated.message_id, review.message_id); assert.equal(f.channels.get(review.channel_id)!.messageCache.size, 1); f.ctx.db.close();
+});
+
+test('manual ticket closure cancels community votes and cannot be overridden by a late ballot', async () => {
+  const f = fixture(); await expiredBallot(f, ['yes', 'yes', 'yes']); await f.ctx.tickets.close(1, ALICE, 'Withdrawn');
+  await f.ctx.tickets.votes.tick(); assert.equal(f.ctx.tickets.votes.get(1)!.state, 'cancelled'); assert.equal(f.dms.length, 0);
+  assert.equal(f.ctx.tickets.votes.get(1)!.decision, null); f.ctx.db.close();
+});
+
+test('ticket logs include actual conversation text in one readable summary with complete TXT evidence', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('support');
+  const message = f.original(ticket.channel_id!, 99, 'I cannot see the clan channel.'); f.channels.get(ticket.channel_id!)!.messageCache.set(message.id, message);
+  await f.ctx.tickets.close(ticket.id, STAFF, 'Access restored.');
+  const rows = f.ctx.db.all<{ payload: string }>("SELECT payload FROM log_outbox WHERE dedupe_key LIKE 'ticket-transcript:%'"); assert.equal(rows.length, 1);
+  const payload = JSON.parse(rows[0].payload) as { channelId: string; embeds: APIEmbed[]; files: { name: string; base64: string }[] };
+  assert.equal(payload.channelId, '1557439533979803678'); assert.match(payload.embeds[0].description!, /I cannot see the clan channel/);
+  assert.match(Buffer.from(payload.files[0].base64, 'base64').toString('utf8'), /I cannot see the clan channel/);
+  assert.ok(payload.files.every(file => file.name.endsWith('.txt'))); assert.ok(embedCharacters(payload.embeds) < 5800); f.ctx.db.close();
+});
+
+test('GIF, edit and deleted ticket messages route exclusively to Message Logs; link previews do not add edit logs', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('support');
+  f.ctx.history = { ingest: (message: Message) => f.ctx.db.recordMessage(snapshotMessage(message), 'live') } as unknown as Context['history'];
+  f.ctx.audit.deletionAttribution = async () => 'Unknown'; installEvents(f.ctx);
+  const settle = async () => { await new Promise(resolve => setTimeout(resolve, 15)); };
+  const message = f.original(ticket.channel_id!, 88, 'https://tenor.com/view/goat-gif-12345');
+  (f.ctx.client as unknown as EventEmitter).emit('messageCreate', message); await settle();
+  const edited = { ...message, content: 'Changed to https://tenor.com/view/goat-gif-12345', editedTimestamp: Date.now() } as Message;
+  (f.ctx.client as unknown as EventEmitter).emit('messageUpdate', message, edited); await settle();
+  const enriched = { ...edited, embeds: [{ toJSON: () => ({ type: 'gifv', image: { url: 'https://media.tenor.com/example.gif' } }) }] } as unknown as Message;
+  (f.ctx.client as unknown as EventEmitter).emit('messageUpdate', edited, enriched); await settle(); (f.ctx.client as unknown as EventEmitter).emit('messageDelete', enriched); await settle();
+  const rows = f.ctx.db.all<{ payload: string; dedupe_key: string }>("SELECT payload,dedupe_key FROM log_outbox WHERE dedupe_key LIKE 'gif:%' OR dedupe_key LIKE 'edit:%' OR dedupe_key LIKE 'delete:%'");
+  assert.equal(rows.length, 3); for (const row of rows) assert.equal(JSON.parse(row.payload).channelId, '1557439487813091358');
+  assert.equal(rows.filter(row => row.dedupe_key.startsWith('edit:')).length, 1); f.ctx.db.close();
+});
+
+test('upgrade migrates ticket username and review structures without resetting the new-member cutoff', () => {
+  const path = mkdtempSync(join(tmpdir(), 'goat-v21-')); const file = join(path, 'goat.sqlite'); const original = new Store(file);
+  original.setMeta('username_reminder_started_at', '123'); original.run('ALTER TABLE tickets DROP COLUMN roblox_username'); original.run('ALTER TABLE tickets DROP COLUMN owner_name'); original.close();
+  const migrated = new Store(file); const columns = migrated.all<{ name: string }>('PRAGMA table_info(tickets)');
+  assert.ok(columns.some(column => column.name === 'roblox_username')); assert.equal(migrated.meta('username_reminder_started_at'), '123');
+  assert.equal(migrated.meta('schema_version'), '3'); assert.equal(VERSION, '2.1.0');
+  const review = migrated.get<TicketReview>('SELECT * FROM ticket_reviews'); assert.equal(review, undefined); migrated.close(); rmSync(path, { recursive: true, force: true });
+});
+
+test('existing two-embed application messages are upgraded in place and retain durable privacy repair', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('application');
+  const message = f.channels.get(ticket.channel_id!)!.messageCache.get(ticket.opening_message_id!)!;
+  await message.edit({ embeds: [{ title: 'Old banner' }, { title: 'Old checklist' }] });
+  f.ctx.db.setMeta('ticket_embed_version', '2.0.0'); f.ctx.tickets = new TicketService(f.ctx);
+  f.setPermissionFailure(true); await f.ctx.tickets.syncPermissions(); assert.equal(f.ctx.tickets.get(1).embed_dirty, 1);
+  f.setPermissionFailure(false); f.ctx.db.run('UPDATE tickets SET retry_at=0'); await f.ctx.tickets.tick();
+  assert.equal(message.embeds.length, 1); assert.match(message.embeds[0].description!, /Mastery/);
+  assert.equal(f.ctx.tickets.get(1).embed_dirty, 0); assert.equal(f.ctx.tickets.get(1).opening_message_id, message.id); f.ctx.db.close();
+});
+
+test('a deleted ticket channel is reconciled on restart and its outstanding voting is cancelled', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('application');
+  f.channels.delete(ticket.channel_id!); f.ctx.tickets = new TicketService(f.ctx); await f.ctx.tickets.syncPermissions();
+  assert.equal(f.ctx.tickets.get(1).state, 'deleted'); assert.equal(f.ctx.tickets.votes.get(1)!.state, 'cancelled'); assert.equal(f.dms.length, 0); f.ctx.db.close();
+});
+
+test('join and leave logs carry account and server dates on Member Logs; role administration stays separate', async () => {
+  const f = fixture(); Object.assign(f.ctx.guild, { memberCount: 27 });
+  const member = Object.assign(f.members.get(BOB)!, { guild: f.ctx.guild }); installEvents(f.ctx);
+  const bus = f.ctx.client as unknown as EventEmitter;
+  bus.emit('guildMemberAdd', member); bus.emit('guildMemberRemove', member);
+  bus.emit('guildAuditLogEntryCreate', { id: '1550000000009999888', action: AuditLogEvent.MemberRoleUpdate, targetId: BOB,
+    executorId: STAFF, createdTimestamp: Date.now(), reason: 'Clan promotion', changes: [{ key: '$add', new: [{ id: f.ctx.config.nickname.roleId }] }], target: null, extra: null }, f.ctx.guild);
+  await new Promise(resolve => setTimeout(resolve, 15));
+  const rows = f.ctx.db.all<{ payload: string; dedupe_key: string | null }>('SELECT payload,dedupe_key FROM log_outbox');
+  const memberships = rows.map(row => JSON.parse(row.payload) as { channelId?: string; embeds: APIEmbed[] }).filter(row => row.channelId === '1557439665378959491');
+  assert.equal(memberships.length, 2);
+  for (const entry of memberships) { assert.match(entry.embeds[0].description!, new RegExp(BOB)); assert.ok(entry.embeds[0].fields?.some(field => field.name === 'Account Created')); }
+  assert.ok(memberships[0].embeds[0].fields?.some(field => field.name === 'Joined Server'));
+  assert.ok(memberships[1].embeds[0].fields?.some(field => field.name === 'Left Server'));
+  for (let index = 0; index < 4; index++) await f.ctx.logs.flush();
+  const admin = f.sent.find(record => record.channelId === '1557440463974436956'); assert.ok(admin);
+  assert.match((json(admin.payload.embeds![0]) as APIEmbed).title!, /Roles Updated/); f.ctx.db.close();
 });

@@ -46,7 +46,7 @@ W repozytorium **Zerqoon/test3** ustaw **Settings → Root Directory** na **`/R3
 2. Ustaw **Mount Path** dokładnie na **`/app/data`**.
 3. Zatwierdź oczekujące zmiany wraz ze zmiennymi usługi.
 
-Na wolumenie będą statystyki, archiwum nicków, wpisy giveawayów, zapisane losowania, sprawy moderacyjne, kolejka logów, tickety, autorole i terminy usunięcia przypomnień. Aktualizacja kodu nie usuwa tych danych.
+Na wolumenie będą statystyki, archiwum nicków, wpisy giveawayów, zapisane losowania, sprawy moderacyjne, kolejka logów, tickety, głosy, decyzje aplikacji, autorole i terminy usunięcia przypomnień. Aktualizacja kodu nie usuwa tych danych.
 
 Railway montuje wolumen z uprawnieniami root, dlatego `RAILWAY_RUN_UID=0` pozwala procesowi z tego obrazu zapisywać bazę. Bot sprawdza, czy na Railway istnieje wolumen i czy `DATABASE_PATH` leży wewnątrz niego. Przy złym ustawieniu zobaczysz konkretny błąd w logach.
 
@@ -63,7 +63,7 @@ Railway montuje wolumen z uprawnieniami root, dlatego `RAILWAY_RUN_UID=0` pozwal
 | Restart Policy | `Always`, jeśli dostępne w Twoim planie; w przeciwnym razie `On Failure` |
 | HTTP Healthcheck Path | Pozostaw puste |
 
-Kliknij **Deploy**. W Build Logs powinien być użyty wykryty Dockerfile. W logach uruchomienia czekaj na **GOAT ready**; na Discordzie pojawią się komendy `/giveway-create`, `/messages` i pozostałe.
+Kliknij **Deploy**. W Build Logs powinien być użyty wykryty Dockerfile. W logach uruchomienia czekaj na **GOAT ready**; pole `version` powinno mieć `2.1.0`. Na Discordzie pojawią się komendy `/giveway-create`, `/messages` i pozostałe.
 
 Bot jest procesem łączącym się z Discordem przez gateway. Domena publiczna i port HTTP nie są potrzebne do działania. Nie uruchamiaj równocześnie kopii na komputerze z tym samym tokenem.
 

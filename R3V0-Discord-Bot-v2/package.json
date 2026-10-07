@@ -1,10 +1,12 @@
 {
   "name": "goat-clan-bot",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
-  "description": "GOAT clan Discord bot — immutable usernames, audit logs, giveaways and activity tracking",
+  "description": "GOAT clan Discord bot \u2014 immutable usernames, audit logs, giveaways and activity tracking",
   "type": "module",
-  "engines": { "node": ">=24.15.0" },
+  "engines": {
+    "node": ">=24.15.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/index.js",

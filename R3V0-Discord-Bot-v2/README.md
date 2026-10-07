@@ -1,6 +1,6 @@
 # GOAT Clan Bot
 
-A complete English Discord bot for the GOAT Roblox clan, version **2.0.0**. To update **Zerqoon/test3** and the existing Railway service, start with **UPDATE_V2_PL.md** and **UPLOAD-GITHUB.ps1**. Full hosting instructions are in **RAILWAY_SETUP_PL.md**; local setup is in **START_HERE_PL.md**.
+A complete English Discord bot for the GOAT Roblox clan, version **2.1.0**. To update **Zerqoon/test3** and the existing Railway service, start with **UPDATE_V2_PL.md** and **UPLOAD-GITHUB.ps1**. Full hosting instructions are in **RAILWAY_SETUP_PL.md**; local setup is in **START_HERE_PL.md**.
 
 ## GitHub + Railway
 
@@ -39,10 +39,11 @@ On Windows, **START-GOAT.bat** handles installation, compilation and launch. Wit
 ## Features
 
 - Immutable username channel: original upper Discord display name as title, author avatar, original text, ID and timestamp. Successful bot publication is persisted before deleting the source. Attachments are copied within the configured limits; unsupported / oversized copies preserve the source and report the problem.
-- Detailed audit logs with readable channel types and permission names, native audit actors, joins and account age, role / channel administration, edits, deletions and GIFs. An 8-second window groups up to five embeds per message within Discord limits. Routine bot changes and unchanged history reports are quiet by default. Large evidence receives TXT attachments. Persistent frozen batches retain their contents during retry and restart.
+- Separate message, ticket, membership and administration log channels. Readable channel types and permission names, native audit actors, account creation / join dates, edits, deletions and GIFs. An 8-second window groups up to five embeds per message within Discord limits. Routine bot changes and unchanged history reports are quiet by default. Large evidence receives TXT attachments. Persistent frozen batches retain their contents during retry and restart.
 - Native giveaway modal with a mandatory role picker, one public entry button, private withdrawal button, duration parser, host preview, selected-role ping, persistent entries, secure random draws, fresh role checks, rerolls, cancellation, winner announcements and DMs. Duplicate entry presses give no extra chance. The scheduler resumes saved draws after a restart.
 - Persistent human autorole jobs backfill existing members and cover future joins without per-member log spam. Only members joining after this version's first start qualify for the clan-role Roblox @username reminder; it pings just that member and its stored 60-second deletion survives restarts.
-- Private Clan Application and Support tickets with the supplied GOAT artwork, application screenshot example and four-item checklist. Atomic private channel creation, one active ticket per kind and member, staff claims, explicit participants, close reason modals, reopening, dedicated Ticket Logs and paginated HTML transcripts. Channel deletion waits for confirmed transcript delivery; permanent delivery receipts survive log cleanup.
+- Compact branded Clan Application and Support panels. A Roblox username modal is required before any channel is created. One active ticket per member across both categories, persisted five-minute cooldown, three submissions per hour and a server queue limit. Application instructions use one embed with four screenshot requirements and the supplied example. Privacy, claims, participants, reopen / close and delivery-gated deletion are retained. Ticket Logs show the actual conversation in a readable embed with complete paginated TXT evidence.
+- Application votes publish the applicant nickname and Roblox username on the configured voting channel with Vote Yes / Vote No buttons. One changeable vote per human server member; applicants cannot vote on themselves. After ten minutes, at least three eligible votes and a strict majority accept or reject the application, close its ticket and attempt a branded DM. Ties and insufficient turnout await staff. Approve / Reject controls and slash commands require fresh configured access. Ballots, decisions, closure progress and DM status survive restarts.
 - Daily / weekly / monthly / all-time activity based on the Europe/Warsaw calendar, plus paginated leaderboards. Historical import resumes per channel and fills accessible offline gaps on startup / periodic sync. Counts remain after an observed deletion.
 - ` | GOAT` server nickname tag for the configured clan role. Uses the current upper display name and preserves the original nickname for restoration after role removal.
 - Native canvas welcome card using the supplied GOAT artwork, a dark overlay, central member avatar, display name and current member count.
@@ -51,11 +52,24 @@ On Windows, **START-GOAT.bat** handles installation, compilation and launch. Wit
 
 ## Commands
 
-Public: `/messages`, `/leaderboard`, `/help`, eligible giveaway entry / private withdrawal buttons, and Clan Application / Support ticket opening buttons. Ticket owners can close and reopen their own tickets.
+Public: `/messages`, `/leaderboard`, `/help`, eligible giveaway entry / private withdrawal buttons, and Clan Application / Support ticket opening buttons. Ticket owners can close and reopen undecided tickets. Only staff can reopen a decided application.
 
-Restricted: `/giveway-create` (and `/giveaway-create`), `/giveaway-list`, `/giveaway-end`, `/giveaway-reroll`, `/giveaway-cancel`, `/ban`, `/unban`, `/mute`, `/unmute`, `/warn`, `/warnings`, `/case`, `/history-sync`, `/username-retry`, `/username-remove`, `/nickname-sync`, `/welcome-preview`, `/goat-status`, `/autorole-sync`, `/ticket-panel`, `/ticket-list`, `/ticket-add`, `/ticket-remove`, `/ticket-close`, `/ticket-repair`. Ticket claims and deletion are also restricted.
+Restricted: `/giveway-create` (and `/giveaway-create`), `/giveaway-list`, `/giveaway-end`, `/giveaway-reroll`, `/giveaway-cancel`, `/ban`, `/unban`, `/mute`, `/unmute`, `/warn`, `/warnings`, `/case`, `/history-sync`, `/username-retry`, `/username-remove`, `/nickname-sync`, `/welcome-preview`, `/goat-status`, `/autorole-sync`, `/ticket-panel`, `/ticket-list`, `/ticket-add`, `/ticket-remove`, `/ticket-close`, `/ticket-approve`, `/ticket-reject`, `/ticket-repair`. Ticket claims, manual application decisions and deletion are also restricted.
 
 Privileged slash commands are registered without a default Discord permission mask, so a configured owner who loses their role can still invoke them. Authorization is checked against current server roles on every action. Unauthorized users receive only a private generic refusal. Normal registration replaces this application's guild commands; it does not modify another bot's commands or clear global commands.
+
+## Ticket and log defaults
+
+| Purpose | Channel |
+| --- | --- |
+| Ticket panel | `1557384522713276488` |
+| Application voting | `1557433699572777000` |
+| Message edits / deletes / GIFs, including ticket messages | `1557439487813091358` |
+| Ticket lifecycle and conversation summaries | `1557439533979803678` |
+| Joins / leaves with user ID and account dates | `1557439665378959491` |
+| Role / channel / other administration | `1557440463974436956` |
+
+`config.json` controls the cooldown, hourly / active limits, vote deadline and minimum turnout. `tickets.voting.voterRoleIds: []` permits human server members other than the applicant; a nonempty list requires at least one listed role at the vote and final count. Community voting is for Clan Application; Support stays a private help conversation. Roblox usernames are supplied by applicants and syntax-checked; this is not proof of Roblox account ownership. Acceptance does not assign a clan role automatically. Closed ticket channels remain read-only until staff delete them after evidence delivery. Existing ticket messages and the panel are refreshed on update; older tickets without a captured Roblox username are not retroactively submitted to community voting.
 
 ## Data and operational behavior
 
@@ -63,11 +77,11 @@ Privileged slash commands are registered without a default Discord permission ma
 
 Backfill sees accessible existing messages. Discord cannot supply messages deleted before observation, removed channels or unavailable private threads. Statistics report import coverage; activity-gated giveaway entries wait while an import is running. Counts cover human messages, not bot / webhook messages. Calendar values are current periods, not rolling 24-hour / 7-day / 30-day windows.
 
-Deletion audit logs do not include a specific message ID. The bot clearly labels any matching executor as an audit candidate rather than asserting an unverified actor. Audit logs are the source for exact role / channel / moderation actors. Closed DMs are recorded without preventing the moderation action or giveaway result.
+Deletion audit logs do not include a specific message ID. The bot clearly labels any matching executor as an audit candidate rather than asserting an unverified actor. Audit logs are the source for exact role / channel / moderation actors. Closed DMs are recorded without preventing a moderation action, giveaway result or application decision.
 
-Default message snapshot retention is unlimited (`logging.retainMessageContentDays: 0`). Store the database and log channels with access suitable for your server. Imported old username submissions intentionally become bot-owned messages. Ticket transcripts preserve text and observed deletions, but their external Discord attachment links may expire. Discord server owners and members with Administrator bypass channel overwrites, including private ticket channels.
+Default message snapshot retention is unlimited (`logging.retainMessageContentDays: 0`). Store the database and log channels with access suitable for your server. Imported old username submissions intentionally become bot-owned messages. Ticket conversation TXT files preserve text and observed deletions, but their external Discord attachment links may expire. Discord server owners and members with Administrator bypass channel overwrites, including private ticket channels.
 
-Delivery uses stored message IDs, reconciliation against bot footer IDs, and Discord nonces. Discord REST and local disk cannot form one distributed transaction; an abrupt failure in the send/record boundary can require reconciliation. Winner selections and unique entries are durable. In-flight work interrupted by a process stop resumes from the last saved state.
+Delivery uses stored message IDs, reconciliation against bot footer IDs, and Discord nonces. Discord REST and local disk cannot form one distributed transaction; an abrupt failure in the send/record boundary can require reconciliation. Discord nonces deduplicate recent sends; a very long uncertain network outage can still require manual DM reconciliation. Winner selections, unique entries, application votes and application decisions are durable. In-flight work interrupted by a process stop resumes from the last saved state.
 
 ## Validation and tools
 
@@ -78,7 +92,7 @@ npm run preview
 npm run backup
 ```
 
-**39 tests pass.** They cover persistent hosting configuration, authorization, duration limits, DST periods, deduplication, archive safety, history recovery, clean audit formatting, log grouping and restart retries, human autoroles, new-join-only reminders, timed deletion recovery, private ticket overwrites, fresh access checks, participant repair, transcript pagination and escaping, delete-before-delivery protection, migration, giveaway roles and draw recovery, and temporary-ban protection. Local tests use Discord API doubles; no live server or hosting login was supplied.
+**60 tests pass.** They cover persistent hosting configuration, authorization, duration limits, DST periods, deduplication, archive safety, history recovery, clean audit formatting, log grouping and restart retries, human autoroles, new-join-only reminders, timed deletion recovery, private ticket overwrites, fresh access checks, participant repair, plain-text conversation pagination, required username forms, cross-category anti-spam, unique changeable votes, majority / quorum / tie handling, final eligibility checks, manual authorization and decision / DM restart recovery, delete-before-delivery protection, migration, giveaway roles and draw recovery, and temporary-ban protection. Local tests use Discord API doubles; no live server or hosting login was supplied.
 
 ## Layout
 

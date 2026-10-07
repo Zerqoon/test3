@@ -1,3 +1,4 @@
+import { VERSION } from '../core/version.js';
 import { AttachmentBuilder, MessageFlags, type Interaction, type ChatInputCommandInteraction } from 'discord.js';
 import type { Context } from '../core/types.js';
 import { isStaff, requireStaff } from '../core/access.js';
@@ -89,6 +90,12 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
       await ctx.tickets.participant(i.channelId, i.options.getUser('user', true).id, i.user.id, name === 'ticket-remove');
       await reply('Ticket', name === 'ticket-remove' ? 'Participant removed.' : 'Participant added.'); return;
     }
+    case 'ticket-approve': case 'ticket-reject': {
+      const ticket = ctx.tickets.fromChannel(i.channelId);
+      if (!ticket) throw new UserError('Use this command inside a GOAT application ticket.');
+      await ctx.tickets.votes.decide(ticket.id, name === 'ticket-approve' ? 'accepted' : 'rejected', i.user.id, reason(i));
+      await reply('Application', name === 'ticket-approve' ? 'Application accepted. The ticket is being closed.' : 'Application rejected. The ticket is being closed.'); return;
+    }
     case 'ticket-close': {
       const ticket = ctx.tickets.fromChannel(i.channelId);
       if (!ticket) throw new UserError('Use this command inside a GOAT ticket.');
@@ -97,7 +104,7 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
     }
     case 'ticket-list': {
       const tickets = ctx.db.all<TicketRow>('SELECT * FROM tickets WHERE guild_id=? ORDER BY id DESC LIMIT 15', ctx.guild.id);
-      await reply('Tickets', tickets.map(ticket => `**#${ticket.id}** • ${ticket.kind === 'application' ? 'Clan Application' : 'Support'} • ${ticket.state}\n<@${ticket.owner_id}>${ticket.channel_id && ticket.state !== 'deleted' ? ` • <#${ticket.channel_id}>` : ''}`).join('\n\n') || 'No tickets yet.'); return;
+      await reply('Tickets', tickets.map(ticket => `**#${ticket.id}** • ${ticket.kind === 'application' ? 'Clan Application' : 'Support'} • ${ticket.state}\n<@${ticket.owner_id}> • \`@${ticket.roblox_username ?? 'Not supplied'}\`${ticket.channel_id && ticket.state !== 'deleted' ? ` • <#${ticket.channel_id}>` : ''}`).join('\n\n') || 'No tickets yet.'); return;
     }
     case 'welcome-preview': {
       const member = await ctx.guild.members.fetch(i.user.id);
@@ -111,7 +118,7 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
       const live = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM giveaways WHERE guild_id=? AND state IN ('active','ending','publishing')", ctx.guild.id)!.n;
       const tickets = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM tickets WHERE guild_id=? AND state IN ('creating','open','closing','reopening')", ctx.guild.id)!.n;
       const roles = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM autorole_jobs WHERE guild_id=? AND status='pending'", ctx.guild.id)!.n;
-      await i.editReply({ embeds: [goatEmbed('System Status', colors.green).addFields({ name: 'Uptime', value: humanDuration(Date.now() - ctx.startedAt), inline: true },
+      await i.editReply({ embeds: [goatEmbed('System Status', colors.green).addFields({ name: 'Version', value: VERSION, inline: true }, { name: 'Uptime', value: humanDuration(Date.now() - ctx.startedAt), inline: true },
         { name: 'Gateway', value: `${ctx.client.ws.ping} ms`, inline: true }, { name: 'Queued Logs', value: String(ctx.logs.pending()), inline: true },
         { name: 'Username Jobs', value: String(pending), inline: true }, { name: 'Live Giveaways', value: String(live), inline: true },
         { name: 'Active Tickets', value: String(tickets), inline: true }, { name: 'Autorole Queue', value: String(roles), inline: true },
@@ -121,7 +128,7 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
     case 'help': {
       const staff = await isStaff(i, ctx.config);
       const description = '**Activity**\n/messages [user]\n/leaderboard [period] [page]\n\n**Giveaway Entry**\nUse Enter Giveaway. Your private confirmation lets you leave.\n\n**Tickets**\nUse Clan Application or Support on the ticket panel.' +
-        (staff ? '\n\n**GOAT Tools**\n/giveway-create (also /giveaway-create)\n/giveaway-list • /giveaway-end • /giveaway-reroll • /giveaway-cancel\n/ban • /unban • /mute • /unmute • /warn • /warnings • /case\n/history-sync • /username-retry • /username-remove\n/nickname-sync • /autorole-sync • /welcome-preview • /goat-status\n/ticket-panel • /ticket-list • /ticket-add • /ticket-remove • /ticket-close • /ticket-repair' : '');
+        (staff ? '\n\n**GOAT Tools**\n/giveway-create (also /giveaway-create)\n/giveaway-list • /giveaway-end • /giveaway-reroll • /giveaway-cancel\n/ban • /unban • /mute • /unmute • /warn • /warnings • /case\n/history-sync • /username-retry • /username-remove\n/nickname-sync • /autorole-sync • /welcome-preview • /goat-status\n/ticket-panel • /ticket-list • /ticket-add • /ticket-remove • /ticket-close • /ticket-approve • /ticket-reject • /ticket-repair' : '');
       await reply('Commands', description); return;
     }
     default: throw new UserError('This command is not registered in the current GOAT version.');
@@ -148,7 +155,11 @@ export async function routeInteraction(ctx: Context, i: Interaction): Promise<vo
       if (brand === 'goat' && system === 'giveaway' && action === 'modal' && id) {
         await requireStaff(i, ctx.config); await ctx.giveaways.submit(i, id);
       }
-      if (brand === 'goat' && system === 'ticket' && action === 'close-modal' && id) await ctx.tickets.closeModal(i, id);
+      if (brand === 'goat' && system === 'ticket' && id) {
+        if (action === 'open-modal') await ctx.tickets.openModal(i, id);
+        else if (action === 'close-modal') await ctx.tickets.closeModal(i, id);
+        else if ((action === 'approve-modal' || action === 'reject-modal') && /^\d+$/.test(id)) await ctx.tickets.votes.submitDecision(i, Number(id), action === 'approve-modal' ? 'accepted' : 'rejected');
+      }
       return;
     }
     if (i.isButton()) {

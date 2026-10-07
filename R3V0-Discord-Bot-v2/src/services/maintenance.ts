@@ -13,5 +13,6 @@ export function maintain(ctx: Context): void {
     ctx.db.run('DELETE FROM audit_seen WHERE created_at<?', now - 45 * 86400000);
     ctx.db.run("DELETE FROM giveaway_drafts WHERE expires_at<? AND status IN ('draft','review','discarded')", now - 86400000);
     ctx.db.run('DELETE FROM ticket_requests WHERE expires_at<?', now - 86400000);
+    ctx.db.run("DELETE FROM custom_embeds WHERE state='draft' AND expires_at<?", now - 86400000);
   });
 }

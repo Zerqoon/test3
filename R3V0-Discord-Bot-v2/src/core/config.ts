@@ -19,7 +19,7 @@ export const configSchema = z.object({
     syncIntervalMinutes: z.number().int().min(5).max(1440),
     excludedChannelIds: z.array(snowflake), pageDelayMs: z.number().int().min(0).max(5000) }),
   logging: z.object({ logGifs: z.boolean(), retainMessageContentDays: z.number().int().min(0),
-    batchWindowMs: z.number().int().min(0).max(60000).default(8000),
+    batchWindowMs: z.number().int().min(0).max(60000).default(700),
     batchMaxEmbeds: z.number().int().min(1).max(10).default(5),
     ignoreRoutineBotActions: z.boolean().default(true), logSystemOnline: z.boolean().default(false) }),
   giveaways: z.object({ maxDurationDays: z.number().int().min(1).max(3650), maxWinners: z.number().int().min(1).max(20),
@@ -35,7 +35,7 @@ export const configSchema = z.object({
     maxTicketsPerHour: z.number().int().min(1).max(20).default(3),
     maxOpenTickets: z.number().int().min(1).max(200).default(50),
     voting: z.object({ enabled: z.boolean().default(true), channelId: snowflake.default('1557433699572777000'),
-      durationSeconds: z.number().int().min(60).max(604800).default(600),
+      durationSeconds: z.number().int().min(60).max(604800).default(180),
       minimumVotes: z.number().int().min(1).max(1000).default(3), voterRoleIds: z.array(snowflake).default([]) }).default({})
   }).default({}),
   autoRegisterCommands: z.boolean()

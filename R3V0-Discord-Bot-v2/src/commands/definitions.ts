@@ -18,6 +18,10 @@ const targetReason = (name: string, description: string) => new SlashCommandBuil
 // Commands remain visible so the configured owner can invoke them without any role.
 // Every privileged command, modal and button is guarded again at runtime.
 export const commandDefinitions = [
+  new SlashCommandBuilder().setName('embed').setDescription('Create a GOAT embed with optional outside text and a selected ping')
+    .addChannelOption(option => option.setName('channel').setDescription('Where to send it (default: this channel)').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+    .addRoleOption(option => option.setName('ping-role').setDescription('Optional role to mention'))
+    .addUserOption(option => option.setName('ping-user').setDescription('Optional person to mention')),
   create('giveway-create'), create('giveaway-create'),
   giveawayId('giveaway-end', 'End a GOAT giveaway and draw winners now'),
   giveawayId('giveaway-reroll', 'Draw new winners, excluding previous GOAT winners'),
@@ -26,9 +30,9 @@ export const commandDefinitions = [
   new SlashCommandBuilder().setName('giveaway-list').setDescription('List recent GOAT giveaways and their IDs'),
   new SlashCommandBuilder().setName('messages').setDescription('View daily, weekly, monthly and lifetime GOAT message totals')
     .addUserOption(o => o.setName('user').setDescription('Member (default: yourself)')),
-  new SlashCommandBuilder().setName('leaderboard').setDescription('View the GOAT message leaderboard')
+  ...['leaderboard', 'leadboard'].map(name => new SlashCommandBuilder().setName(name).setDescription('View the GOAT message leaderboard')
     .addStringOption(o => o.setName('period').setDescription('Calendar period').addChoices(...periods))
-    .addIntegerOption(o => o.setName('page').setDescription('Page number').setMinValue(1).setMaxValue(10000)),
+    .addIntegerOption(o => o.setName('page').setDescription('Page number').setMinValue(1).setMaxValue(10000))),
   targetReason('ban', 'Ban a member with a GOAT reason and DM notice')
     .addStringOption(o => o.setName('duration').setDescription('Optional temporary ban: 10m, 1 day, 1w (otherwise permanent)').setMaxLength(100)),
   targetReason('mute', 'Apply a Discord timeout with a GOAT reason and DM notice')
@@ -59,11 +63,12 @@ export const commandDefinitions = [
     .addUserOption(option => option.setName('user').setDescription('Member to remove').setRequired(true)),
   new SlashCommandBuilder().setName('ticket-close').setDescription('Close the current GOAT ticket and save its transcript')
     .addStringOption(option => option.setName('reason').setDescription('Closing reason').setRequired(true).setMaxLength(1000)),
+  new SlashCommandBuilder().setName('ticket-start-vote').setDescription('Start the 3-minute vote for the current clan application'),
   ...['ticket-approve', 'ticket-reject'].map(name => new SlashCommandBuilder().setName(name).setDescription(name === 'ticket-approve' ? 'Accept the current clan application and notify the applicant' : 'Reject the current clan application and notify the applicant')
     .addStringOption(option => option.setName('reason').setDescription('Reason included in the applicant DM').setRequired(true).setMaxLength(1000))),
   new SlashCommandBuilder().setName('ticket-repair').setDescription('Restore configured privacy permissions for GOAT tickets'),
   new SlashCommandBuilder().setName('welcome-preview').setDescription('Preview the GOAT welcome card privately'),
   new SlashCommandBuilder().setName('goat-status').setDescription('View GOAT health, queued logs and database status'),
   new SlashCommandBuilder().setName('help').setDescription('Show GOAT commands')
-];
-export const publicCommands = new Set(['messages', 'leaderboard', 'help']);
+].map(command => command.setDefaultMemberPermissions(null));
+export const publicCommands = new Set(['messages', 'leaderboard', 'leadboard', 'help']);

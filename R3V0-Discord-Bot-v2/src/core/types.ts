@@ -11,6 +11,7 @@ import type { ModerationService } from '../services/moderation.js';
 import type { AuditService } from '../services/audit.js';
 import type { MemberService } from '../services/members.js';
 import type { TicketService } from '../services/tickets.js';
+import type { EmbedService } from '../services/custom-embeds.js';
 
 export interface AttachmentSnapshot { id: string; url: string; name: string; size: number; contentType: string | null; }
 export interface MessageSnapshot {
@@ -25,5 +26,6 @@ export interface Context {
   logs: LogService; history: HistoryService; usernames: UsernameService;
   nicknames: NicknameService; giveaways: GiveawayService; moderation: ModerationService; audit: AuditService;
   members: MemberService; tickets: TicketService;
+  embeds: EmbedService;
   startedAt: number; stopping: boolean;
 }

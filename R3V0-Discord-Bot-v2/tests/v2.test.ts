@@ -23,6 +23,9 @@ import { majorityDecision, type TicketReview } from '../src/services/ticket-vote
 import { installEvents } from '../src/events/install.js';
 import { VERSION } from '../src/core/version.js';
 import { maintain } from '../src/services/maintenance.js';
+import { routeInteraction } from '../src/commands/router.js';
+import { commandDefinitions } from '../src/commands/definitions.js';
+import { EmbedService, customEmbedPayload } from '../src/services/custom-embeds.js';
 
 const GUILD = '1550000000000000100', ALICE = '1550000000000000101', BOB = '1550000000000000102',
   BOT = '1550000000000000103', STAFF = '1550000000000000104';
@@ -115,13 +118,18 @@ function fixture() {
   addMember(settings.access.ownerUserIds[0]);
   for (const id of [settings.channels.logs, settings.channels.usernames, settings.channels.messageLogs, settings.channels.memberLogs, settings.tickets.logChannelId, settings.tickets.panelChannelId, settings.tickets.voting.channelId]) makeChannel(id);
   ctx.logs = new LogService(ctx); ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx);
-  ctx.audit = new AuditService(ctx); ctx.giveaways = new GiveawayService(ctx);
+  ctx.audit = new AuditService(ctx); ctx.giveaways = new GiveawayService(ctx); ctx.embeds = new EmbedService(ctx);
   function interaction(userId = ALICE, channelId = settings.tickets.panelChannelId, messageId = db.meta('ticket_panel_message_id')) {
     const replies: unknown[] = [];
-    return { user: { id: userId }, guild: ctx.guild, channelId, message: { id: messageId }, replies,
-      deferReply: async () => {}, editReply: async (payload: unknown) => { replies.push(payload); },
-      reply: async (payload: unknown) => { replies.push(payload); }, showModal: async (payload: unknown) => { replies.push(payload); }
-    } as unknown as ButtonInteraction;
+    const acknowledgements: unknown[] = [];
+    const result = { user: members.get(userId)?.user ?? { id: userId }, guild: ctx.guild, guildId: GUILD, channelId,
+      message: { id: messageId }, replies, acknowledgements, deferred: false, replied: false,
+      deferReply: async (options: unknown) => { result.deferred = true; acknowledgements.push(options); },
+      editReply: async (payload: unknown) => { replies.push(payload); },
+      reply: async (payload: unknown) => { result.replied = true; replies.push(payload); },
+      showModal: async (payload: unknown) => { result.replied = true; replies.push(payload); }
+    };
+    return result as unknown as ButtonInteraction;
   }
   async function form(kind: 'application' | 'support', userId = ALICE, username = 'Stormy_123') {
     const button = interaction(userId); await ctx.tickets.open(button, kind);
@@ -135,6 +143,10 @@ function fixture() {
     const ticket = ctx.db.get<{ id: number }>('SELECT id FROM tickets WHERE owner_id=? ORDER BY id DESC LIMIT 1', userId)!;
     return ctx.tickets.get(ticket.id);
   }
+  async function startVote(id = 1, userId = STAFF) {
+    const ticket = ctx.tickets.get(id);
+    await ctx.tickets.votes.start(interaction(userId, ticket.channel_id!, ticket.opening_message_id!), id);
+  }
   function voteInteraction(userId: string, id = 1) {
     const review = ctx.tickets.votes.get(id)!; return interaction(userId, review.channel_id, review.message_id!);
   }
@@ -144,7 +156,7 @@ function fixture() {
       author: members.get(ALICE)!.user, member: members.get(ALICE), embeds: [], attachments: new Collection(), stickers: new Collection(), components: []
     } as unknown as Message;
   }
-  return { ctx, members, channels, sent, deletes, roleAdds, dms, interaction, original, addMember, form, openTicket, voteInteraction,
+  return { ctx, members, channels, sent, deletes, roleAdds, dms, interaction, original, addMember, form, openTicket, startVote, voteInteraction,
     setDmError: (code?: number) => { dmError = code; },
     setSendFailure: (value: boolean) => { failSend = value; }, setHistoryFailure: (value: boolean) => { failHistory = value; },
     setRolePosition: (value: number) => { rolePosition = value; }, setPermissionFailure: (value: boolean) => { failPermissions = value; } };
@@ -188,7 +200,7 @@ test('log batches respect character limits and keep general and ticket destinati
   for (let index = 0; index < 5; index++) await f.ctx.logs.flush(Date.now() + 10000);
   assert.equal(f.ctx.logs.pending(), 0); assert.equal(f.sent.length, 3);
   for (const record of f.sent) assert.ok(embedCharacters((record.payload.embeds ?? []).map(embed => json(embed) as APIEmbed)) <= 5800);
-  assert.equal(f.sent.at(-1)!.channelId, f.ctx.config.tickets.logChannelId); f.ctx.db.close();
+  assert.equal(f.sent.filter(record => record.channelId === f.ctx.config.tickets.logChannelId).length, 1); f.ctx.db.close();
 });
 
 test('failed log batches retain identical payload and nonce after a service restart', async () => {
@@ -342,7 +354,7 @@ test('legacy database migration preserves activity totals while adding log and t
   db.recordMessage(snapshot, 'live'); db.run('ALTER TABLE log_outbox DROP COLUMN batch_id'); db.close();
   const migrated = new Store(file); assert.equal(migrated.count(GUILD, ALICE), 1);
   assert.ok(migrated.all<{ name: string }>('PRAGMA table_info(log_outbox)').some(column => column.name === 'batch_id'));
-  assert.equal(migrated.meta('schema_version'), '3'); migrated.close(); rmSync(path, { recursive: true, force: true });
+  assert.equal(migrated.meta('schema_version'), '5'); migrated.close(); rmSync(path, { recursive: true, force: true });
 });
 
 test('Roblox form requires a real username shape and cannot create a channel before submission', async () => {
@@ -383,7 +395,7 @@ test('hourly and server-wide ticket limits are checked before channel creation',
 });
 
 test('application ballots are published on the requested channel with the applicant nickname; support has no ballot', async () => {
-  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.startVote(); await f.ctx.tickets.votes.tick();
   const review = f.ctx.tickets.votes.get(1)!; assert.equal(review.channel_id, '1557433699572777000'); assert.ok(review.message_id);
   const message = f.sent.find(record => record.channelId === review.channel_id)!; const embed = json(message.payload.embeds![0]) as APIEmbed;
   assert.match(embed.title!, /Stormy/); assert.match(embed.description!, /@Stormy_123/);
@@ -394,7 +406,7 @@ test('application ballots are published on the requested channel with the applic
 });
 
 test('votes persist once per member, can be changed, and never close early on the first click', async () => {
-  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.startVote(); await f.ctx.tickets.votes.tick();
   await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(ALICE), 1, 'yes'), /own application/);
   await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(BOT), 1, 'yes'), /Bots/);
   await f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'yes'); await f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'yes');
@@ -407,7 +419,7 @@ test('votes persist once per member, can be changed, and never close early on th
 });
 
 async function expiredBallot(f: ReturnType<typeof fixture>, choices: ('yes' | 'no')[]) {
-  await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.startVote(); await f.ctx.tickets.votes.tick();
   const people = [BOB, STAFF, f.ctx.config.access.ownerUserIds[0]];
   for (let i = 0; i < choices.length; i++) await f.ctx.tickets.votes.vote(f.voteInteraction(people[i]), 1, choices[i]);
   f.ctx.db.run('UPDATE ticket_reviews SET ends_at=?,last_update=0', Date.now() - 1);
@@ -430,31 +442,29 @@ test('strict No majority rejects and DMs the applicant; decided tickets cannot b
   await assert.rejects(f.ctx.tickets.button(f.interaction(ALICE, f.ctx.tickets.get(1).channel_id!), 'reopen', '1'), /restricted/); f.ctx.db.close();
 });
 
-test('ties and insufficient turnout await manual review without closing or sending a decision DM', async () => {
-  for (const choices of [['yes', 'no'], ['yes']] as ('yes' | 'no')[][]) {
+test('ties and no turnout await manual review without closing or sending a decision DM', async () => {
+  for (const choices of [['yes', 'no'], []] as ('yes' | 'no')[][]) {
     const f = fixture(); await expiredBallot(f, choices); await f.ctx.tickets.votes.tick();
     assert.equal(f.ctx.tickets.votes.get(1)!.state, 'review'); assert.equal(f.ctx.tickets.get(1).state, 'open'); assert.equal(f.dms.length, 0);
     await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'no'), /ended/); f.ctx.db.close();
   }
-  assert.equal(majorityDecision(2, 2, 3), null); assert.equal(majorityDecision(2, 1, 3), 'accepted');
+  assert.equal(majorityDecision(2, 2), null); assert.equal(majorityDecision(2, 1), 'accepted');
 });
 
-test('vote role requirements and server membership are checked again at final counting', async () => {
-  const f = fixture(); const role = f.ctx.config.nickname.roleId; f.ctx.config.tickets.voting.voterRoleIds = [role];
-  await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
-  await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, 'yes'), /requirement/);
-  for (const person of [BOB, STAFF, f.ctx.config.access.ownerUserIds[0]]) {
-    f.members.get(person)!.roles.cache.set(role, { id: role } as never); await f.ctx.tickets.votes.vote(f.voteInteraction(person), 1, 'yes');
-  }
-  f.members.get(BOB)!.roles.cache.delete(role); f.members.delete(STAFF);
-  f.ctx.db.run('UPDATE ticket_reviews SET ends_at=?,last_update=0', Date.now() - 1); await f.ctx.tickets.votes.tick();
-  assert.equal(f.ctx.tickets.votes.get(1)!.yes_count, 1); assert.equal(f.ctx.tickets.votes.get(1)!.state, 'review'); assert.equal(f.dms.length, 0); f.ctx.db.close();
+test('voting has no role requirement and final counting retains votes after someone leaves', async () => {
+  const f = fixture(); f.ctx.config.tickets.voting.voterRoleIds = [f.ctx.config.nickname.roleId];
+  await expiredBallot(f, ['yes', 'yes', 'no']);
+  f.members.delete(BOB); f.members.delete(STAFF);
+  await f.ctx.tickets.votes.tick();
+  assert.equal(f.ctx.tickets.votes.get(1)!.yes_count, 2); assert.equal(f.ctx.tickets.votes.get(1)!.state, 'accepted');
+  assert.equal(f.dms.length, 1); f.ctx.db.close();
 });
 
 test('manual approval requires fresh staff access for buttons and submitted modals, including owner fallback', async () => {
   const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); const channelId = f.ctx.tickets.get(1).channel_id!;
-  await assert.rejects(f.ctx.tickets.button(f.interaction(ALICE, channelId), 'approve', '1'), /restricted/i);
-  await f.ctx.tickets.button(f.interaction(STAFF, channelId), 'approve', '1'); f.members.get(STAFF)!.roles.cache.clear();
+  await assert.rejects(f.ctx.tickets.button(f.interaction(ALICE, channelId), 'approve', '1'), /replaced/i);
+  await assert.rejects(f.ctx.tickets.votes.decisionModal(f.interaction(ALICE, channelId), 1, 'accepted'), /restricted/i);
+  await f.ctx.tickets.votes.decisionModal(f.interaction(STAFF, channelId), 1, 'accepted'); f.members.get(STAFF)!.roles.cache.clear();
   const submission = Object.assign(f.interaction(STAFF, channelId), { fields: { getTextInputValue: () => 'Requirements met.' } }) as unknown as ModalSubmitInteraction;
   await assert.rejects(f.ctx.tickets.votes.submitDecision(submission, 1, 'accepted'), /restricted/i);
   const ownerSubmission = Object.assign(f.interaction(f.ctx.config.access.ownerUserIds[0], channelId), { fields: { getTextInputValue: () => 'Requirements met.' } }) as unknown as ModalSubmitInteraction;
@@ -480,7 +490,7 @@ test('closed DMs are recorded quietly and transient DM failures retry without pr
 });
 
 test('missing vote panels are restored once and forged message buttons cannot vote', async () => {
-  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.ctx.tickets.votes.tick();
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.startVote(); await f.ctx.tickets.votes.tick();
   const review = f.ctx.tickets.votes.get(1)!; await assert.rejects(f.ctx.tickets.votes.vote(f.interaction(BOB, review.channel_id, '1550000000009999999'), 1, 'yes'), /current/);
   f.channels.get(review.channel_id)!.messageCache.delete(review.message_id!); f.ctx.db.run('UPDATE ticket_reviews SET dirty=1,last_update=0');
   f.ctx.tickets = new TicketService(f.ctx); await f.ctx.tickets.votes.tick(); const updated = f.ctx.tickets.votes.get(1)!;
@@ -488,7 +498,7 @@ test('missing vote panels are restored once and forged message buttons cannot vo
 });
 
 test('manual ticket closure cancels community votes and cannot be overridden by a late ballot', async () => {
-  const f = fixture(); await expiredBallot(f, ['yes', 'yes', 'yes']); await f.ctx.tickets.close(1, ALICE, 'Withdrawn');
+  const f = fixture(); await expiredBallot(f, ['yes', 'yes']); await f.ctx.tickets.close(1, ALICE, 'Withdrawn');
   await f.ctx.tickets.votes.tick(); assert.equal(f.ctx.tickets.votes.get(1)!.state, 'cancelled'); assert.equal(f.dms.length, 0);
   assert.equal(f.ctx.tickets.votes.get(1)!.decision, null); f.ctx.db.close();
 });
@@ -525,7 +535,7 @@ test('upgrade migrates ticket username and review structures without resetting t
   original.setMeta('username_reminder_started_at', '123'); original.run('ALTER TABLE tickets DROP COLUMN roblox_username'); original.run('ALTER TABLE tickets DROP COLUMN owner_name'); original.close();
   const migrated = new Store(file); const columns = migrated.all<{ name: string }>('PRAGMA table_info(tickets)');
   assert.ok(columns.some(column => column.name === 'roblox_username')); assert.equal(migrated.meta('username_reminder_started_at'), '123');
-  assert.equal(migrated.meta('schema_version'), '3'); assert.equal(VERSION, '2.1.0');
+  assert.equal(migrated.meta('schema_version'), '5'); assert.equal(VERSION, '2.2.0');
   const review = migrated.get<TicketReview>('SELECT * FROM ticket_reviews'); assert.equal(review, undefined); migrated.close(); rmSync(path, { recursive: true, force: true });
 });
 
@@ -541,7 +551,7 @@ test('existing two-embed application messages are upgraded in place and retain d
 });
 
 test('a deleted ticket channel is reconciled on restart and its outstanding voting is cancelled', async () => {
-  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('application');
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('application'); await f.startVote();
   f.channels.delete(ticket.channel_id!); f.ctx.tickets = new TicketService(f.ctx); await f.ctx.tickets.syncPermissions();
   assert.equal(f.ctx.tickets.get(1).state, 'deleted'); assert.equal(f.ctx.tickets.votes.get(1)!.state, 'cancelled'); assert.equal(f.dms.length, 0); f.ctx.db.close();
 });
@@ -563,4 +573,223 @@ test('join and leave logs carry account and server dates on Member Logs; role ad
   for (let index = 0; index < 4; index++) await f.ctx.logs.flush();
   const admin = f.sent.find(record => record.channelId === '1557440463974436956'); assert.ok(admin);
   assert.match((json(admin.payload.embeds![0]) as APIEmbed).title!, /Roles Updated/); f.ctx.db.close();
+});
+
+test('opening a ticket never starts or publishes a ballot; Roblox username leads the embed', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('application');
+  await f.ctx.tickets.votes.tick();
+  assert.equal(f.ctx.tickets.votes.get(ticket.id), undefined);
+  assert.equal(f.sent.filter(record => record.channelId === f.ctx.config.tickets.voting.channelId).length, 0);
+  const initial = f.sent.find(record => record.channelId === ticket.channel_id)!.payload;
+  assert.match((json(initial.embeds![0]) as APIEmbed).description!, /^## @Stormy_123\n/);
+  assert.equal(initial.components!.length, 1);
+  const row = json(initial.components![0]) as { components: { label: string }[] };
+  assert.deepEqual(row.components.map(button => button.label), ['Claim', 'Close', 'Start Vote']);
+  f.ctx.db.close();
+});
+
+test('Start Vote requires fresh staff access and starts exactly 180 seconds after the click', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('application');
+  f.ctx.db.run('UPDATE tickets SET created_at=? WHERE id=?', Date.now() - 3600000, ticket.id);
+  await assert.rejects(f.startVote(1, ALICE), /restricted/);
+  f.members.get(STAFF)!.roles.cache.clear(); await assert.rejects(f.startVote(), /restricted/);
+  const now = Date.now(); await f.startVote(1, f.ctx.config.access.ownerUserIds[0]);
+  const review = f.ctx.tickets.votes.get(1)!;
+  assert.ok(review.started_at! >= now); assert.equal(review.ends_at - review.started_at!, 180000);
+  await assert.rejects(f.startVote(1, f.ctx.config.access.ownerUserIds[0]), /already started/);
+  f.ctx.tickets = new TicketService(f.ctx); await f.ctx.tickets.votes.tick();
+  assert.equal(f.ctx.tickets.votes.get(1)!.ends_at, review.ends_at);
+  assert.equal(f.ctx.tickets.get(1).state, 'open'); f.ctx.db.close();
+});
+
+test('three Yes or three No immediately lock the result and complete one closure and DM', async () => {
+  for (const choice of ['yes', 'no'] as const) {
+    const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application'); await f.startVote();
+    await f.ctx.tickets.votes.tick();
+    for (const person of [BOB, STAFF]) await f.ctx.tickets.votes.vote(f.voteInteraction(person), 1, choice);
+    assert.equal(f.ctx.tickets.votes.get(1)!.decision, null);
+    const third = f.voteInteraction(f.ctx.config.access.ownerUserIds[0]);
+    await f.ctx.tickets.votes.vote(third, 1, choice);
+    const decision = choice === 'yes' ? 'accepted' : 'rejected';
+    assert.equal(f.ctx.tickets.votes.get(1)!.decision, decision);
+    assert.ok(Date.now() < f.ctx.tickets.votes.get(1)!.ends_at);
+    assert.match(JSON.stringify((third as unknown as { replies: unknown[] }).replies), new RegExp(decision));
+    await assert.rejects(f.ctx.tickets.votes.vote(f.voteInteraction(BOB), 1, choice === 'yes' ? 'no' : 'yes'), /ended/);
+    await f.ctx.tickets.votes.tick();
+    assert.equal(f.ctx.tickets.get(1).state, 'closed'); assert.equal(f.dms.length, 1);
+    await f.ctx.tickets.votes.tick(); assert.equal(f.dms.length, 1); f.ctx.db.close();
+  }
+});
+
+test('one vote is sufficient for a majority at the deadline with no quorum', async () => {
+  for (const choice of ['yes', 'no'] as const) {
+    const f = fixture(); await expiredBallot(f, [choice]); await f.ctx.tickets.votes.tick();
+    assert.equal(f.ctx.tickets.votes.get(1)!.decision, choice === 'yes' ? 'accepted' : 'rejected');
+    assert.equal(f.ctx.tickets.get(1).state, 'closed'); assert.equal(f.dms.length, 1); f.ctx.db.close();
+  }
+});
+
+test('upgrading old automatic ballots waits for Start Vote and retains old votes and first-join cutoff', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'goat-v22-')); const file = join(directory, 'goat.sqlite');
+  const original = new Store(file); original.setMeta('username_reminder_started_at', '123');
+  original.run("INSERT INTO tickets(guild_id,owner_id,kind,state,created_at) VALUES(?,?,'application','open',?)", GUILD, ALICE, 123);
+  original.run('INSERT INTO ticket_reviews(ticket_id,channel_id,ends_at,minimum_votes) VALUES(1,?,?,3)', config.tickets.voting.channelId, Date.now() - 1);
+  original.run("INSERT INTO ticket_votes VALUES(1,?,'yes',123)", BOB);
+  original.run('ALTER TABLE ticket_reviews DROP COLUMN started_at'); original.close();
+  const migrated = new Store(file);
+  assert.equal(migrated.get<TicketReview>('SELECT * FROM ticket_reviews')!.state, 'waiting');
+  assert.equal(migrated.get<{ n: number }>('SELECT COUNT(*) n FROM ticket_votes')!.n, 1);
+  assert.equal(migrated.meta('username_reminder_started_at'), '123');
+  assert.equal(migrated.meta('schema_version'), '5'); migrated.close(); rmSync(directory, { recursive: true, force: true });
+});
+
+test('slow delivery in one log channel does not prevent logs reaching another channel', async () => {
+  const f = fixture(); const slow = f.channels.get(f.ctx.config.channels.logs)!;
+  const send = slow.send; let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  slow.send = async payload => { await gate; return send(payload); };
+  f.ctx.logs.enqueue({ embeds: [{ title: 'Slow administration route' }] });
+  const sending = f.ctx.logs.flush(); await new Promise(resolve => setImmediate(resolve));
+  f.ctx.logs.enqueue({ channelId: f.ctx.config.channels.messageLogs, embeds: [{ title: 'Fast edit log' }] });
+  await f.ctx.logs.flush();
+  assert.equal(f.sent.length, 1); assert.equal(f.sent[0].channelId, f.ctx.config.channels.messageLogs);
+  release(); await sending; assert.equal(f.ctx.logs.pending(), 0); f.ctx.db.close();
+});
+
+test('partial edits and uncached deletes log stored evidence without fetching the edited or deleted message', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('support');
+  const message = f.original(ticket.channel_id!, 900, 'Before edit'); f.ctx.db.recordMessage(snapshotMessage(message), 'live');
+  let fetches = 0, audits = 0;
+  f.ctx.audit.deletionAttribution = async () => { audits++; throw new Error('Audit unavailable'); };
+  installEvents(f.ctx);
+  const partial = { ...message, partial: true, author: null, member: null, content: 'After edit', editedTimestamp: Date.now(),
+    fetch: async () => { fetches++; throw new Error('Already deleted on Discord'); } } as unknown as Message;
+  (f.ctx.client as unknown as EventEmitter).emit('messageUpdate', { ...partial, content: null }, partial);
+  await new Promise(resolve => setImmediate(resolve));
+  (f.ctx.client as unknown as EventEmitter).emit('messageDelete', { ...partial, content: null });
+  await new Promise(resolve => setImmediate(resolve));
+  const rows = f.ctx.db.all<{ payload: string; dedupe_key: string }>("SELECT payload,dedupe_key FROM log_outbox WHERE dedupe_key LIKE 'edit:%' OR dedupe_key LIKE 'delete:%'");
+  assert.equal(rows.length, 2); assert.equal(fetches, 0); assert.equal(audits, 0);
+  const edit = JSON.parse(rows.find(row => row.dedupe_key.startsWith('edit:'))!.payload) as { embeds: APIEmbed[] };
+  assert.equal(edit.embeds[0].fields!.find(field => field.name === 'Before')!.value, 'Before edit');
+  assert.equal(edit.embeds[0].fields!.find(field => field.name === 'After')!.value, 'After edit');
+  const deleted = JSON.parse(rows.find(row => row.dedupe_key.startsWith('delete:'))!.payload) as { embeds: APIEmbed[] };
+  assert.match(deleted.embeds[0].description!, /After edit/); assert.equal(f.ctx.db.count(GUILD, ALICE), 1); f.ctx.db.close();
+});
+
+test('public activity, both leaderboard spellings and help respond visibly with no member REST lookup', async () => {
+  const f = fixture(); let lookups = 0;
+  f.ctx.history = { running: false, summary: () => ({ indexed: 0, complete: 0, pending: 0, errors: 0 }) } as unknown as Context['history'];
+  f.ctx.guild.members.fetch = (async () => { lookups++; throw new Error('REST is slow'); }) as typeof f.ctx.guild.members.fetch;
+  for (const name of ['messages', 'leaderboard', 'leadboard', 'help']) {
+    const interaction = Object.assign(f.interaction(), { commandName: name, isAutocomplete: () => false,
+      isChatInputCommand: () => true, isRepliable: () => true,
+      options: { getUser: () => null, getString: () => null, getInteger: () => null } });
+    await routeInteraction(f.ctx, interaction);
+    const result = interaction as unknown as { acknowledgements: { flags?: number }[]; replies: { embeds: { toJSON(): APIEmbed }[] }[] };
+    assert.equal(result.acknowledgements.length, 1); assert.equal(result.acknowledgements[0].flags, undefined);
+    assert.ok(!result.replies[0].embeds[0].toJSON().title!.includes('Unavailable'));
+  }
+  assert.equal(lookups, 0);
+  for (const definition of commandDefinitions) assert.equal(definition.toJSON().default_member_permissions, null);
+  assert.equal(commandDefinitions.length, 34); f.ctx.db.close();
+});
+
+test('privileged slash commands acknowledge before fresh authorization and deny ordinary members', async () => {
+  const f = fixture(); const interaction = Object.assign(f.interaction(), { commandName: 'ticket-panel',
+    isAutocomplete: () => false, isChatInputCommand: () => true, isRepliable: () => true });
+  const fetch = f.ctx.guild.members.fetch;
+  f.ctx.guild.members.fetch = (async (...args: unknown[]) => {
+    assert.ok(interaction.deferred); return fetch(...args as Parameters<typeof fetch>);
+  }) as typeof fetch;
+  await routeInteraction(f.ctx, interaction);
+  const result = interaction as unknown as { acknowledgements: { flags: number }[]; replies: { embeds: { toJSON(): APIEmbed }[] }[] };
+  assert.equal(result.acknowledgements[0].flags, 64);
+  assert.match(result.replies[0].embeds[0].toJSON().description!, /restricted/);
+  assert.equal(f.ctx.db.meta('ticket_panel_message_id'), undefined); f.ctx.db.close();
+});
+
+test('an observed edit still emits a metadata log when neither snapshot nor Discord fetch is available', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('support'); installEvents(f.ctx);
+  const message = { ...f.original(ticket.channel_id!, 901), partial: true, author: null, member: null, content: null,
+    editedTimestamp: Date.now(), fetch: async () => { throw Object.assign(new Error('Unknown message'), { code: 10008 }); } } as unknown as Message;
+  (f.ctx.client as unknown as EventEmitter).emit('messageUpdate', message, message);
+  await new Promise(resolve => setImmediate(resolve));
+  const row = f.ctx.db.get<{ payload: string }>("SELECT payload FROM log_outbox WHERE dedupe_key LIKE 'edit:%'")!;
+  const payload = JSON.parse(row.payload) as { channelId: string; embeds: APIEmbed[] };
+  assert.equal(payload.channelId, f.ctx.config.channels.messageLogs); assert.match(payload.embeds[0].title!, /Edited/);
+  assert.match(payload.embeds[0].description!, /could not be retrieved/); f.ctx.db.close();
+});
+
+test('deletion attribution uses an already observed unique audit candidate without delaying evidence', async () => {
+  const f = fixture(); await f.ctx.tickets.ensurePanel(); const ticket = await f.openTicket('support');
+  const message = f.original(ticket.channel_id!, 902, 'Preserved deleted text'); f.ctx.db.recordMessage(snapshotMessage(message), 'live');
+  f.ctx.audit.ingest({ id: '1550000000001234599', action: AuditLogEvent.MessageDelete, targetId: ALICE, executorId: STAFF,
+    createdTimestamp: Date.now(), extra: { channelId: ticket.channel_id }, changes: [] } as unknown as GuildAuditLogsEntry);
+  f.ctx.audit.deletionAttribution = async () => { throw new Error('Blocking audit lookup must not run'); }; installEvents(f.ctx);
+  (f.ctx.client as unknown as EventEmitter).emit('messageDelete', message); await new Promise(resolve => setImmediate(resolve));
+  const row = f.ctx.db.get<{ payload: string }>("SELECT payload FROM log_outbox WHERE dedupe_key LIKE 'delete:%'")!;
+  const embed = (JSON.parse(row.payload) as { embeds: APIEmbed[] }).embeds[0];
+  assert.equal(embed.description, 'Preserved deleted text');
+  assert.match(embed.fields!.find(field => field.name === 'Deletion Attribution')!.value, new RegExp(`Audit candidate: <@${STAFF}>`));
+  f.ctx.db.close();
+});
+
+test('custom embed payload preserves outside text and only enables the selected role and user pings', () => {
+  const payload = customEmbedPayload({ title: 'Clan News', description: 'Message in the embed', outside: '@everyone Outside text',
+    image: 'https://cdn.discordapp.com/example.png', color: '#F97316' }, config.nickname.roleId, BOB);
+  assert.match(payload.content!, new RegExp(`<@&${config.nickname.roleId}> <@${BOB}>`));
+  assert.match(payload.content!, /@everyone Outside text/);
+  assert.deepEqual(payload.allowedMentions?.parse, []);
+  assert.deepEqual(payload.allowedMentions?.roles, [config.nickname.roleId]); assert.deepEqual(payload.allowedMentions?.users, [BOB]);
+  const embed = payload.embeds![0] as APIEmbed;
+  assert.equal(embed.title, 'GOAT • Clan News'); assert.equal(embed.description, 'Message in the embed');
+  assert.equal(embed.color, 0xF97316); assert.equal(embed.image?.url, 'https://cdn.discordapp.com/example.png'); assert.match(embed.footer!.text, /GOAT/);
+  assert.equal(embed.timestamp, undefined);
+});
+
+test('custom embeds reject invalid colors, non-HTTPS images and empty or oversized messages', () => {
+  const input = { title: 'News', description: 'Hello', outside: '', image: '', color: '' };
+  assert.throws(() => customEmbedPayload({ ...input, color: 'purple!' }), /color/);
+  assert.throws(() => customEmbedPayload({ ...input, image: 'http://example.com/picture.png' }), /HTTPS/);
+  assert.throws(() => customEmbedPayload({ ...input, description: '  ' }), /message/);
+  assert.throws(() => customEmbedPayload({ ...input, outside: 'x'.repeat(1901) }), /long/);
+});
+
+async function embedForm(f: ReturnType<typeof fixture>, userId = STAFF) {
+  const interaction = Object.assign(f.interaction(userId), { options: { getChannel: () => ({ id: f.ctx.config.channels.usernames }),
+    getRole: () => ({ id: f.ctx.config.nickname.roleId }), getUser: () => ({ id: BOB }) } });
+  await f.ctx.embeds.create(interaction as unknown as import('discord.js').ChatInputCommandInteraction);
+  const form = (interaction as unknown as { replies: { toJSON(): { custom_id: string; components: unknown[] } }[] }).replies[0].toJSON();
+  const values: Record<string, string> = { title: 'Hello GOAT', description: 'Clan update', outside: 'Please read', image: '', color: '#22D3EE' };
+  const modal = Object.assign(f.interaction(userId), { fields: { getTextInputValue: (id: string) => values[id] } }) as unknown as ModalSubmitInteraction;
+  return { id: form.custom_id.split(':')[3], form, modal };
+}
+
+test('/embed has five native labelled inputs and repeated modal submissions publish exactly one message', async () => {
+  const f = fixture(); const request = await embedForm(f);
+  assert.equal(request.form.components.length, 5);
+  await f.ctx.embeds.submit(request.modal, request.id); await f.ctx.embeds.submit(request.modal, request.id);
+  const published = f.sent.filter(record => record.channelId === f.ctx.config.channels.usernames);
+  assert.equal(published.length, 1); assert.ok(String(published[0].payload.nonce).length <= 25);
+  assert.equal(published[0].payload.enforceNonce, true);
+  assert.equal(f.ctx.db.get<{ state: string }>('SELECT state FROM custom_embeds WHERE id=?', request.id)!.state, 'published'); f.ctx.db.close();
+});
+
+test('embed submission checks fresh access, rejects a stolen form and recovers queued delivery after restart', async () => {
+  const f = fixture(); const request = await embedForm(f);
+  f.members.get(STAFF)!.roles.cache.clear(); await assert.rejects(f.ctx.embeds.submit(request.modal, request.id), /restricted/);
+  f.members.get(STAFF)!.roles.cache.set(f.ctx.config.access.staffRoleIds[0], { id: f.ctx.config.access.staffRoleIds[0] } as never);
+  const impostor = Object.assign(f.interaction(f.ctx.config.access.ownerUserIds[0]), { fields: { getTextInputValue: () => 'stolen' } }) as unknown as ModalSubmitInteraction;
+  await assert.rejects(f.ctx.embeds.submit(impostor, request.id), /unavailable/);
+  f.setSendFailure(true); await f.ctx.embeds.submit(request.modal, request.id);
+  assert.equal(f.ctx.db.get<{ state: string }>('SELECT state FROM custom_embeds WHERE id=?', request.id)!.state, 'publishing');
+  f.setSendFailure(false); f.ctx.embeds = new EmbedService(f.ctx); f.ctx.db.run('UPDATE custom_embeds SET retry_at=0'); await f.ctx.embeds.tick();
+  assert.equal(f.sent.length, 1); await f.ctx.embeds.tick(); assert.equal(f.sent.length, 1); f.ctx.db.close();
+});
+
+test('clan application requests four screenshots and a fifth answer about 24/7 AFK availability', () => {
+  const instructions = applicationRequirements().toJSON().description!;
+  assert.match(instructions, /four screenshots/); assert.match(instructions, /5 · Can you be AFK 24\/7\?/);
+  assert.match(instructions, /answer Yes or No/);
 });

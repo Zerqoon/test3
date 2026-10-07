@@ -93,4 +93,13 @@ export class AuditService {
     if (!candidate?.executorId) return 'Unknown — self-deletions and some bot deletions have no per-message audit entry.';
     return `Audit candidate: <@${candidate.executorId}> (\`${candidate.executorId}\`)\nDiscord links this audit entry to the author and channel, not to a specific message ID.`;
   }
+  cachedDeletionAttribution(authorId: string, channelId: string, at: number): string {
+    const candidates = this.entries.filter(entry => {
+      const extra = entry.extra as { channel?: { id?: string }; channelId?: string } | null;
+      return entry.action === AuditLogEvent.MessageDelete && entry.targetId === authorId &&
+        Math.abs(entry.createdTimestamp - at) <= 10000 && (extra?.channel?.id ?? extra?.channelId) === channelId;
+    });
+    if (candidates.length !== 1 || !candidates[0].executorId) return 'Unknown — Discord supplies no message-specific deletion actor. Check the server audit log.';
+    return `Audit candidate: <@${candidates[0].executorId}> (\`${candidates[0].executorId}\`)\nThe audit entry identifies an author and channel, not a specific message ID.`;
+  }
 }

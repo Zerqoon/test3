@@ -22,7 +22,7 @@ export function embedCharacters(embeds: APIEmbed[]): number {
 /** Batches are frozen in SQLite before sending; retries keep identical contents. */
 export class LogService {
   private timer?: NodeJS.Timeout;
-  private busy = false;
+  private readonly inFlight = new Set<string>();
   constructor(private readonly ctx: Context) {}
   enqueue(payload: LogPayload, dedupeKey?: string): void {
     this.ctx.db.run('INSERT OR IGNORE INTO log_outbox(dedupe_key,payload,created_at) VALUES(?,?,?)', dedupeKey ?? null, JSON.stringify(payload), Date.now());
@@ -43,11 +43,16 @@ export class LogService {
       }
     }
   }
-  start(): void { this.timer = setInterval(() => { void this.flush(); }, 700); }
+  start(): void { this.timer = setInterval(() => { void this.flush(); }, 250); }
   stop(): void { if (this.timer) clearInterval(this.timer); }
   private freeze(now: number): BatchRow | undefined {
-    const candidates = this.ctx.db.all<OutboxRow>("SELECT * FROM log_outbox WHERE status='pending' AND batch_id IS NULL AND next_attempt<=? ORDER BY id LIMIT 100", now);
-    const first = candidates[0];
+    const blocked = new Set(this.ctx.db.all<{ channel_id: string }>("SELECT DISTINCT channel_id FROM log_batches WHERE status='pending'").map(row => row.channel_id));
+    for (const channel of this.inFlight) blocked.add(channel);
+    const candidates = this.ctx.db.all<OutboxRow>(`SELECT o.* FROM log_outbox o WHERE o.status='pending' AND o.batch_id IS NULL AND o.next_attempt<=?
+      AND NOT EXISTS (SELECT 1 FROM log_batches b WHERE b.status='pending' AND b.channel_id=COALESCE(json_extract(o.payload,'$.channelId'),?))
+      ORDER BY o.id LIMIT 500`, now, this.ctx.config.channels.logs)
+      .filter(row => !blocked.has((JSON.parse(row.payload) as LogPayload).channelId ?? this.ctx.config.channels.logs));
+    const first = candidates.find(row => now - row.created_at >= this.ctx.config.logging.batchWindowMs);
     if (!first || now - first.created_at < this.ctx.config.logging.batchWindowMs) return;
     const firstPayload = JSON.parse(first.payload) as LogPayload;
     const channelId = firstPayload.channelId ?? this.ctx.config.channels.logs;
@@ -75,12 +80,22 @@ export class LogService {
     });
   }
   async flush(now = Date.now()): Promise<void> {
-    if (this.busy || this.ctx.stopping) return;
-    this.busy = true;
-    let batch: BatchRow | undefined;
+    if (this.ctx.stopping) return;
+    const work: Promise<void>[] = [];
+    // Independent channels progress even while another Discord route is rate limited.
     try {
-      batch = this.ctx.db.get<BatchRow>("SELECT * FROM log_batches WHERE status='pending' AND next_attempt<=? ORDER BY id LIMIT 1", now) ?? this.freeze(now);
-      if (!batch) return;
+      while (this.inFlight.size < 4) {
+        const batch = this.ctx.db.all<BatchRow>("SELECT * FROM log_batches WHERE status='pending' AND next_attempt<=? ORDER BY id", now)
+          .find(row => !this.inFlight.has(row.channel_id)) ?? this.freeze(now);
+        if (!batch) break;
+        this.inFlight.add(batch.channel_id);
+        work.push(this.sendBatch(batch, now).finally(() => { this.inFlight.delete(batch.channel_id); }));
+      }
+    } catch (err) { this.ctx.logger.error({ error: errorText(err) }, 'GOAT log worker failed'); }
+    await Promise.all(work);
+  }
+  private async sendBatch(batch: BatchRow, now: number): Promise<void> {
+    try {
       const channel = await this.ctx.guild.channels.fetch(batch.channel_id);
       if (!channel?.isTextBased() || !('send' in channel)) throw new Error('Log channel is not a sendable channel.');
       const p = JSON.parse(batch.payload) as LogPayload;
@@ -89,23 +104,24 @@ export class LogService {
         files: p.files?.map(f => new AttachmentBuilder(Buffer.from(f.base64, 'base64'), { name: f.name })) };
       const message = await channel.send(payload);
       this.ctx.db.transaction(() => {
-        this.ctx.db.run("UPDATE log_batches SET status='sent',sent_at=?,message_id=?,error=NULL WHERE id=?", now, message.id, batch!.id);
-        this.ctx.db.run("UPDATE log_outbox SET status='sent',sent_at=?,error=NULL WHERE batch_id=?", now, batch!.id);
-        this.ctx.db.run("INSERT OR IGNORE INTO log_receipts(dedupe_key,message_id,sent_at) SELECT dedupe_key,?,? FROM log_outbox WHERE batch_id=? AND dedupe_key LIKE 'ticket-transcript:%'", message.id, now, batch!.id);
+        this.ctx.db.run("UPDATE log_batches SET status='sent',sent_at=?,message_id=?,error=NULL WHERE id=?", now, message.id, batch.id);
+        this.ctx.db.run("UPDATE log_outbox SET status='sent',sent_at=?,error=NULL WHERE batch_id=?", now, batch.id);
+        this.ctx.db.run("INSERT OR IGNORE INTO log_receipts(dedupe_key,message_id,sent_at) SELECT dedupe_key,?,? FROM log_outbox WHERE batch_id=? AND dedupe_key LIKE 'ticket-transcript:%'", message.id, now, batch.id);
       });
     } catch (err) {
-      if (batch) {
-        const retryAt = now + Math.min(300000, 2000 * 2 ** Math.min(batch.attempts, 8));
-        this.ctx.db.transaction(() => {
-          this.ctx.db.run('UPDATE log_batches SET attempts=attempts+1,next_attempt=?,error=? WHERE id=?', retryAt, errorText(err), batch!.id);
-          this.ctx.db.run('UPDATE log_outbox SET attempts=attempts+1,next_attempt=?,error=? WHERE batch_id=?', retryAt, errorText(err), batch!.id);
-        });
-        this.ctx.logger.warn({ batchId: batch.id, error: errorText(err) }, 'GOAT log batch will retry');
-      } else this.ctx.logger.error({ error: errorText(err) }, 'GOAT log worker failed');
+      const retryAt = now + Math.min(300000, 2000 * 2 ** Math.min(batch.attempts, 8));
+      this.ctx.db.transaction(() => {
+        this.ctx.db.run('UPDATE log_batches SET attempts=attempts+1,next_attempt=?,error=? WHERE id=?', retryAt, errorText(err), batch.id);
+        this.ctx.db.run('UPDATE log_outbox SET attempts=attempts+1,next_attempt=?,error=? WHERE batch_id=?', retryAt, errorText(err), batch.id);
+      });
+      this.ctx.logger.warn({ batchId: batch.id, channelId: batch.channel_id, error: errorText(err) }, 'GOAT log batch will retry');
     }
-    finally { this.busy = false; }
   }
   pending(): number { return this.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM log_outbox WHERE status='pending'")!.n; }
+  health(): string {
+    const failed = this.ctx.db.all<{ channel_id: string; error: string }>("SELECT channel_id,error FROM log_batches WHERE status='pending' AND error IS NOT NULL ORDER BY id DESC LIMIT 4");
+    return failed.length ? failed.map(row => `<#${row.channel_id}>: ${row.error.slice(0, 180)}`).join('\n') : 'No delivery error recorded.';
+  }
 }
 export function textEvidence(name: string, text: string): { name: string; base64: string } {
   return { name, base64: Buffer.from(text, 'utf8').toString('base64') };

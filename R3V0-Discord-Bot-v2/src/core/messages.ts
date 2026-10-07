@@ -18,6 +18,16 @@ export async function completeMessage(message: Message | PartialMessage): Promis
   if (!message.partial) return message as Message;
   try { return await message.fetch(); } catch { return undefined; }
 }
+/** An edit can arrive for a message evicted from the small Discord.js cache. */
+export function updatedSnapshot(message: Message | PartialMessage, before?: MessageSnapshot): MessageSnapshot | undefined {
+  if (!message.partial) return snapshotMessage(message as Message);
+  if (!before || typeof message.content !== 'string') return undefined;
+  return { ...before, content: message.content,
+    embeds: message.embeds.map(embed => embed.toJSON()),
+    attachments: [...message.attachments.values()].map(file => ({ id: file.id, url: file.url, name: file.name, size: file.size, contentType: file.contentType })),
+    stickers: [...message.stickers.values()].map(sticker => ({ id: sticker.id, name: sticker.name, url: sticker.url })),
+    editedAt: message.editedTimestamp ?? Date.now() };
+}
 export function gifMedia(s: MessageSnapshot): { links: string[]; preview?: string } {
   const links = new Set<string>();
   let preview: string | undefined;

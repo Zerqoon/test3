@@ -17,14 +17,19 @@ function coverage(ctx: Context): string {
 }
 async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<void> {
   const name = i.commandName;
+  if (name === 'giveway-create' || name === 'giveaway-create' || name === 'embed') {
+    await requireStaff(i, ctx.config);
+    if (name === 'embed') await ctx.embeds.create(i);
+    else await ctx.giveaways.create(i);
+    return;
+  }
+  await i.deferReply(publicCommands.has(name) ? {} : { flags: MessageFlags.Ephemeral });
   if (!publicCommands.has(name)) await requireStaff(i, ctx.config);
-  if (name === 'giveway-create' || name === 'giveaway-create') { await ctx.giveaways.create(i); return; }
-  await i.deferReply({ flags: MessageFlags.Ephemeral });
   const reply = async (title: string, description: string) => { await i.editReply({ embeds: [goatEmbed(title).setDescription(description)], allowedMentions: noMentions }); };
   switch (name) {
     case 'messages': {
       const user = i.options.getUser('user') ?? i.user;
-      const member = await ctx.guild.members.fetch(user.id).catch(() => undefined);
+      const member = ctx.guild.members.cache.get(user.id);
       const embed = goatEmbed('Message Activity').setThumbnail(user.displayAvatarURL({ extension: 'png', size: 256 }))
         .setDescription(`<@${user.id}> • **${clip(member?.displayName ?? user.displayName, 150)}**`);
       for (const [period, label] of [['daily', 'Today'], ['weekly', 'This Week'], ['monthly', 'This Month'], ['all', 'All Indexed History']] as const) {
@@ -33,7 +38,7 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
       embed.addFields({ name: 'Calendar', value: `Timezone: ${ctx.config.timezone}. Weeks start on Monday.` }, { name: 'Coverage', value: coverage(ctx) });
       await i.editReply({ embeds: [embed], allowedMentions: noMentions }); return;
     }
-    case 'leaderboard': {
+    case 'leaderboard': case 'leadboard': {
       const period = (i.options.getString('period') ?? 'weekly') as Period;
       const page = i.options.getInteger('page') ?? 1;
       const rows = ctx.db.leaderboard(ctx.guild.id, periodStart(period, ctx.config.timezone), (page - 1) * 10);
@@ -85,6 +90,11 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
     case 'nickname-sync': await ctx.nicknames.syncAll(); await reply('Nickname Sync', 'Accessible clan members have been checked. Members above the bot and the server owner cannot be renamed by Discord.'); return;
     case 'autorole-sync': await reply('Autorole Sync', `${await ctx.members.syncRoles()} members queued. Roles will be assigned while GOAT runs.`); return;
     case 'ticket-panel': await ctx.tickets.ensurePanel(true); await reply('Tickets', 'The ticket panel is ready.'); return;
+    case 'ticket-start-vote': {
+      const ticket = ctx.tickets.fromChannel(i.channelId);
+      if (!ticket) throw new UserError('Use this command inside a clan application ticket.');
+      await ctx.tickets.votes.start(i, ticket.id); return;
+    }
     case 'ticket-repair': await ctx.tickets.syncPermissions(); await reply('Tickets', 'Ticket permissions are being checked against the configured access.'); return;
     case 'ticket-add': case 'ticket-remove': {
       await ctx.tickets.participant(i.channelId, i.options.getUser('user', true).id, i.user.id, name === 'ticket-remove');
@@ -118,17 +128,19 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
       const live = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM giveaways WHERE guild_id=? AND state IN ('active','ending','publishing')", ctx.guild.id)!.n;
       const tickets = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM tickets WHERE guild_id=? AND state IN ('creating','open','closing','reopening')", ctx.guild.id)!.n;
       const roles = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM autorole_jobs WHERE guild_id=? AND status='pending'", ctx.guild.id)!.n;
+      const embeds = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM custom_embeds WHERE guild_id=? AND state='publishing'", ctx.guild.id)!.n;
       await i.editReply({ embeds: [goatEmbed('System Status', colors.green).addFields({ name: 'Version', value: VERSION, inline: true }, { name: 'Uptime', value: humanDuration(Date.now() - ctx.startedAt), inline: true },
         { name: 'Gateway', value: `${ctx.client.ws.ping} ms`, inline: true }, { name: 'Queued Logs', value: String(ctx.logs.pending()), inline: true },
         { name: 'Username Jobs', value: String(pending), inline: true }, { name: 'Live Giveaways', value: String(live), inline: true },
         { name: 'Active Tickets', value: String(tickets), inline: true }, { name: 'Autorole Queue', value: String(roles), inline: true },
+        { name: 'Embed Queue', value: String(embeds), inline: true },
+        { name: 'Log Delivery', value: ctx.logs.health() },
         { name: 'History', value: coverage(ctx) }, { name: 'Current Task', value: ctx.history.progress },
         { name: 'Thread Coverage', value: ctx.db.meta('history_thread_warning') ?? 'No enumeration error recorded' })], allowedMentions: noMentions }); return;
     }
     case 'help': {
-      const staff = await isStaff(i, ctx.config);
       const description = '**Activity**\n/messages [user]\n/leaderboard [period] [page]\n\n**Giveaway Entry**\nUse Enter Giveaway. Your private confirmation lets you leave.\n\n**Tickets**\nUse Clan Application or Support on the ticket panel.' +
-        (staff ? '\n\n**GOAT Tools**\n/giveway-create (also /giveaway-create)\n/giveaway-list • /giveaway-end • /giveaway-reroll • /giveaway-cancel\n/ban • /unban • /mute • /unmute • /warn • /warnings • /case\n/history-sync • /username-retry • /username-remove\n/nickname-sync • /autorole-sync • /welcome-preview • /goat-status\n/ticket-panel • /ticket-list • /ticket-add • /ticket-remove • /ticket-close • /ticket-approve • /ticket-reject • /ticket-repair' : '');
+        '\n\n**GOAT Tools**\n/embed [channel] [ping-role] [ping-user]\n/giveway-create (also /giveaway-create)\n/giveaway-list • /giveaway-end • /giveaway-reroll • /giveaway-cancel\n/ban • /unban • /mute • /unmute • /warn • /warnings • /case\n/history-sync • /username-retry • /username-remove\n/nickname-sync • /autorole-sync • /welcome-preview • /goat-status\n/ticket-panel • /ticket-list • /ticket-add • /ticket-remove • /ticket-close • /ticket-start-vote • /ticket-approve • /ticket-reject • /ticket-repair';
       await reply('Commands', description); return;
     }
     default: throw new UserError('This command is not registered in the current GOAT version.');
@@ -152,6 +164,9 @@ export async function routeInteraction(ctx: Context, i: Interaction): Promise<vo
     if (i.isChatInputCommand()) { await command(ctx, i); return; }
     if (i.isModalSubmit()) {
       const [brand, system, action, id] = i.customId.split(':');
+      if (brand === 'goat' && system === 'embed' && action === 'modal' && id) {
+        await ctx.embeds.submit(i, id); return;
+      }
       if (brand === 'goat' && system === 'giveaway' && action === 'modal' && id) {
         await requireStaff(i, ctx.config); await ctx.giveaways.submit(i, id);
       }

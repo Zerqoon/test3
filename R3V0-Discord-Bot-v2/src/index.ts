@@ -19,6 +19,7 @@ import { goatEmbed, colors } from './core/embeds.js';
 import { maintain } from './services/maintenance.js';
 import { MemberService } from './services/members.js';
 import { TicketService } from './services/tickets.js';
+import { EmbedService } from './services/custom-embeds.js';
 
 requireToken();
 assertPersistentDatabase();
@@ -42,7 +43,7 @@ async function shutdown(code = 0): Promise<void> {
   if (ctx) {
     ctx.stopping = true;
     ctx.logs.stop(); ctx.history.stop(); ctx.usernames.stop(); ctx.giveaways.stop(); ctx.moderation.stop();
-    ctx.members.stop(); ctx.tickets.stop();
+    ctx.members.stop(); ctx.tickets.stop(); ctx.embeds.stop();
   }
   if (maintenanceTimer) clearInterval(maintenanceTimer);
   lease.release();
@@ -70,34 +71,49 @@ client.once(Events.ClientReady, ready => {
     ctx.logs = new LogService(ctx); ctx.usernames = new UsernameService(ctx); ctx.history = new HistoryService(ctx);
     ctx.nicknames = new NicknameService(ctx); ctx.giveaways = new GiveawayService(ctx);
     ctx.moderation = new ModerationService(ctx); ctx.audit = new AuditService(ctx);
-    ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx);
+    ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx); ctx.embeds = new EmbedService(ctx);
     installEvents(ctx);
-    for (const id of [config.channels.logs, config.channels.welcome]) {
-      const channel = await guild.channels.fetch(id);
-      if (!channel?.isTextBased() || !('send' in channel)) throw new Error(`GOAT configured channel ${id} is not accessible or sendable.`);
-    }
+    // Interactive handlers and delivery workers become available before a full member preload.
+    ctx.logs.start(); ctx.usernames.start(); ctx.giveaways.start(); ctx.moderation.start(); ctx.embeds.start();
+    ctx.members.initialize(guild.members.cache.values()); ctx.members.start(); ctx.tickets.start();
+    const activeContext = ctx;
+    void Promise.all([config.channels.logs, config.channels.messageLogs, config.channels.memberLogs, config.channels.welcome,
+      ...(config.tickets.enabled ? [config.tickets.logChannelId, config.tickets.panelChannelId, config.tickets.voting.channelId] : [])]
+      .map(async id => {
+        try {
+          const channel = await guild.channels.fetch(id);
+          if (!channel?.isTextBased() || !('send' in channel)) throw new Error('Channel is not accessible or sendable.');
+          if (!channel.permissionsFor(ready.user.id)?.has(['ViewChannel', 'SendMessages', 'EmbedLinks'])) throw new Error('GOAT needs View Channel, Send Messages and Embed Links.');
+        } catch (err) { logger.warn({ channelId: id, error: errorText(err) }, 'GOAT channel access needs attention'); }
+      }));
     if (config.autoRegisterCommands) {
       const rest = new REST({ version: '10' }).setToken(env.token);
-      await rest.put(Routes.applicationGuildCommands(ready.user.id, guild.id), { body: commandDefinitions.map(c => c.toJSON()) });
+      void rest.put(Routes.applicationGuildCommands(ready.user.id, guild.id), { body: commandDefinitions.map(c => c.toJSON()) })
+        .then(() => logger.info({ commands: commandDefinitions.length }, 'GOAT commands registered for all members'))
+        .catch(err => logger.error({ error: errorText(err) }, 'GOAT command registration failed; run npm run register after checking application access'));
     }
     ready.user.setPresence({ activities: [{ name: 'GOAT • Clan Community', type: ActivityType.Watching }], status: 'online' });
-    let membersLoaded = true;
-    try { await guild.members.fetch(); }
-    catch (err) { membersLoaded = false; logger.warn({ error: errorText(err) }, 'GOAT member preload will retry; historical author names may use global display names'); }
-    ctx.logs.start(); ctx.usernames.start(); ctx.giveaways.start(); ctx.moderation.start();
-    ctx.members.initialize(guild.members.cache.values());
-    if (!membersLoaded) ctx.members.requestInitialSync();
-    ctx.members.start(); ctx.tickets.start();
     if (config.tickets.enabled) {
-      try { await ctx.tickets.ensurePanel(); await ctx.tickets.syncPermissions(); }
-      catch (err) { logger.warn({ error: errorText(err) }, 'GOAT ticket panel needs attention; use /ticket-panel after checking channel access'); }
+      void (async () => {
+        try { await activeContext.tickets.ensurePanel(); }
+        catch (err) { logger.warn({ error: errorText(err) }, 'GOAT ticket panel needs attention; use /ticket-panel after checking channel access'); }
+        await activeContext.tickets.syncPermissions();
+      })().catch(err => logger.warn({ error: errorText(err) }, 'GOAT ticket repairs will retry'));
     }
     maintain(ctx);
     maintenanceTimer = setInterval(() => { if (ctx && !ctx.stopping) { try { maintain(ctx); } catch (err) { logger.warn({ error: errorText(err) }, 'GOAT maintenance will retry'); } } }, 3600000);
-    if (config.history.autoImport) { ctx.history.startTimer(); void ctx.history.run(); }
-    else ctx.usernames.releaseHistory();
-    const activeContext = ctx;
-    void ctx.nicknames.syncAll(false).catch(err => logger.warn({ error: errorText(err) }, 'GOAT initial nickname sync failed'));
+    if (!config.history.autoImport) ctx.usernames.releaseHistory();
+    void (async () => {
+      try { await guild.members.fetch(); }
+      catch (err) {
+        activeContext.members.requestInitialSync();
+        logger.warn({ error: errorText(err) }, 'GOAT member preload will retry; historical author names may use global display names');
+      }
+      if (activeContext.stopping) return;
+      activeContext.members.initialize(guild.members.cache.values());
+      if (config.history.autoImport) { activeContext.history.startTimer(); void activeContext.history.run(); }
+      await activeContext.nicknames.syncAll(false);
+    })().catch(err => logger.warn({ error: errorText(err) }, 'GOAT background member sync will retry'));
     if (config.logging.logSystemOnline) activeContext.logs.enqueue({ embeds: [goatEmbed('System Online', colors.green).setDescription('GOAT is online. Persistent jobs have resumed.')
       .addFields({ name: 'Version', value: VERSION }).toJSON()] }, `online:${Date.now()}`);
     logger.info({ guildId: guild.id, version: VERSION }, 'GOAT ready');

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { AuditLogEvent, Events, type GuildMember, type Message, type PartialMessage } from 'discord.js';
 import type { Context, MessageSnapshot } from '../core/types.js';
-import { completeMessage, evidence, gifMedia, snapshotMessage } from '../core/messages.js';
+import { completeMessage, evidence, gifMedia, snapshotMessage, updatedSnapshot } from '../core/messages.js';
 import { colors, goatEmbed, logButtons } from '../core/embeds.js';
 import { clip, errorText, humanDuration, safeText, stamp } from '../core/util.js';
 import { textEvidence } from '../services/logs.js';
@@ -47,7 +47,7 @@ async function logDeleted(ctx: Context, message: Message | PartialMessage): Prom
   const embed = goatEmbed('Message Deleted', colors.red);
   if (s) {
     embed.setThumbnail(s.avatarUrl).setDescription(clip(s.content || '*No text content*', 3000)).addFields(...userFields(s));
-    embed.addFields({ name: 'Deletion Attribution', value: await ctx.audit.deletionAttribution(s.authorId, s.channelId, Date.now()) });
+    embed.addFields({ name: 'Deletion Attribution', value: ctx.audit.cachedDeletionAttribution(s.authorId, s.channelId, Date.now()) });
   } else embed.setDescription('Content unavailable — GOAT had not observed this message before it was deleted.')
     .addFields({ name: 'Message ID', value: `\`${message.id}\`` }, { name: 'Channel', value: `<#${message.channelId}>` });
   if (ctx.stopping) return;
@@ -74,13 +74,28 @@ export function installEvents(ctx: Context): void {
   }));
   client.on(Events.MessageUpdate, (oldMessage, incoming) => protect('messageUpdate', async () => {
     if (incoming.guildId !== ctx.guild.id) return;
-    const message = await completeMessage(incoming);
-    if (!message || message.author.bot || message.webhookId) return;
-    const before = ctx.db.snapshot(message.id) ?? (!oldMessage.partial ? snapshotMessage(oldMessage as Message) : undefined);
-    const after = snapshotMessage(message);
-    ctx.history.ingest(message, 'live');
+    // Preserve the old snapshot before an optional REST request; the message may be deleted meanwhile.
+    const before = ctx.db.snapshot(incoming.id) ?? (!oldMessage.partial ? snapshotMessage(oldMessage as Message) : undefined);
+    let after = updatedSnapshot(incoming, before);
+    if (!after) {
+      const message = await completeMessage(incoming);
+      if (message) after = snapshotMessage(message);
+    }
+    if (!after) {
+      if (incoming.editedTimestamp && !isLogChannel(ctx, incoming.channelId)) {
+        ctx.logs.enqueue({ channelId: messageLogChannel(ctx), embeds: [goatEmbed('Message Edited', colors.orange)
+          .setDescription('The edit was observed, but the complete message could not be retrieved.')
+          .addFields({ name: 'Channel', value: `<#${incoming.channelId}>` }, { name: 'Message', value: `\`${incoming.id}\`` },
+            { name: 'Before', value: clip(before?.content || '[Not observed before edit]', 1000) },
+            { name: 'After', value: clip(incoming.content || '[Content unavailable]', 1000) }).toJSON()] }, `edit:${incoming.id}:${incoming.editedTimestamp}:unavailable`);
+      }
+      return;
+    }
+    if (after.bot) return;
+    ctx.db.recordMessage(after, 'live');
+    if (after.channelId === ctx.config.channels.usernames) ctx.usernames.prepare(after, false);
     logGif(ctx, after);
-    if (isLogChannel(ctx, message.channelId) || (before && sameEditableContent(before, after))) return;
+    if (isLogChannel(ctx, after.channelId) || (before && sameEditableContent(before, after))) return;
     const embed = goatEmbed('Message Edited', colors.orange).setThumbnail(after.avatarUrl).addFields(...userFields(after),
       { name: 'Before', value: clip(before?.content || (before ? '[No text]' : '[Not observed before edit]'), 1000) },
       { name: 'After', value: clip(after.content || '[No text]', 1000) });

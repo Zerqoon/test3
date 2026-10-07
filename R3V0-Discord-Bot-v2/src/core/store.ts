@@ -148,7 +148,19 @@ export class Store {
         PRIMARY KEY(ticket_id,user_id)
       );
     `);
-    this.setMeta('schema_version', '3');
+    const reviewColumns = this.sqlite.prepare('PRAGMA table_info(ticket_reviews)').all() as { name: string }[];
+    if (!reviewColumns.some(column => column.name === 'started_at')) {
+      this.sqlite.exec(`ALTER TABLE ticket_reviews ADD COLUMN started_at INTEGER;
+        UPDATE ticket_reviews SET state='waiting',dirty=1,last_update=0,retry_at=0
+        WHERE decision IS NULL AND state IN ('voting','counting','review');`);
+    }
+    this.sqlite.exec(`CREATE TABLE IF NOT EXISTS custom_embeds (
+      id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, owner_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+      role_id TEXT, user_id TEXT, payload TEXT, message_id TEXT, state TEXT NOT NULL DEFAULT 'draft',
+      created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, retry_at INTEGER NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 0, error TEXT
+    );`);
+    this.setMeta('schema_version', '5');
   }
   private statement(sql: string): StatementSync {
     let s = this.statements.get(sql);

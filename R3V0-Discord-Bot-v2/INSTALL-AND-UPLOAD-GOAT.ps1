@@ -41,14 +41,15 @@ $completed = $false
 try {
     Write-Host ('Reading ZIP: ' + $ZipPath) -ForegroundColor Cyan
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $extractedDirectory -Force
-    foreach ($required in @('package.json', 'config.json', 'UPLOAD-GITHUB.ps1', 'src/services/tickets.ts', 'src/services/ticket-votes.ts', 'assets/application-mastery-example.png')) {
+    foreach ($required in @('package.json', 'config.json', 'UPLOAD-GITHUB.ps1', 'src/services/tickets.ts', 'src/services/ticket-votes.ts', 'src/services/custom-embeds.ts', 'assets/application-mastery-example.png')) {
         if (-not (Test-Path -LiteralPath (Join-Path $source $required))) {
-            throw "Wrong or incomplete ZIP: missing $required. Download the complete GOAT 2.1 project."
+            throw "Wrong or incomplete ZIP: missing $required. Download the latest complete GOAT project."
         }
     }
     $manifest = Get-Content -LiteralPath (Join-Path $source 'package.json') -Raw | ConvertFrom-Json
-    if ([string]$manifest.version -ne '2.1.0') { throw 'This ZIP does not contain GOAT 2.1.0.' }
-    Write-Host 'Verified ZIP source: GOAT 2.1.0 with tickets.' -ForegroundColor Green
+    $goatVersion = [version]([string]$manifest.version)
+    if ($goatVersion -lt [version]'2.2.0' -or $goatVersion.Major -ne 2) { throw 'Download the latest GOAT 2.2 project ZIP.' }
+    Write-Host ('Verified ZIP source: GOAT ' + $manifest.version + ' with Start Vote.') -ForegroundColor Green
 
     New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
     & robocopy $source $DestinationDirectory /E /R:2 /W:1 /XJ /NFL /NDL /NJH /NJS `

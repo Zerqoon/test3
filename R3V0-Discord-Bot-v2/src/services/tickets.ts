@@ -11,7 +11,7 @@ import { isStaff } from '../core/access.js';
 import { colors, goatEmbed, noMentions } from '../core/embeds.js';
 import { errorCode, errorText, humanDuration, Mutex, safeText, stamp, UserError } from '../core/util.js';
 import { captureConversation } from './transcripts.js';
-import { TicketVoteService } from './ticket-votes.js';
+import { TicketVoteService, type TicketReview } from './ticket-votes.js';
 import { VERSION } from '../core/version.js';
 
 export type TicketKind = 'application' | 'support';
@@ -50,7 +50,8 @@ export function applicationRequirements() {
     '**1 · Mastery** — show your mastery and username, as in the example.\n' +
     '**2 · Gamepasses** — show your owned gamepasses.\n' +
     '**3 · Inventory** — show your inventory.\n' +
-    '**4 · Stats** — show your in-game stats.')
+    '**4 · Stats** — show your in-game stats.\n' +
+    '**5 · Can you be AFK 24/7?** — answer Yes or No in this ticket.')
     .setImage('attachment://application-mastery-example.png').setFooter({ text: 'GOAT • Keep the conversation in this ticket' }).setTimestamp(null);
 }
 export function normalizeRobloxUsername(input: string): string {
@@ -60,7 +61,7 @@ export function normalizeRobloxUsername(input: string): string {
   }
   return name;
 }
-function controls(ticket: TicketRow) {
+export function ticketControls(ticket: TicketRow, review?: TicketReview) {
   const row = new ActionRowBuilder<ButtonBuilder>();
   if (ticket.state === 'closed') row.addComponents(
     new ButtonBuilder().setCustomId(`goat:ticket:reopen:${ticket.id}`).setLabel('Reopen').setStyle(ButtonStyle.Success),
@@ -69,11 +70,10 @@ function controls(ticket: TicketRow) {
     new ButtonBuilder().setCustomId(`goat:ticket:claim:${ticket.id}`).setLabel(ticket.claimed_by ? 'Claimed' : 'Claim')
       .setStyle(ButtonStyle.Secondary).setDisabled(!!ticket.claimed_by),
     new ButtonBuilder().setCustomId(`goat:ticket:close:${ticket.id}`).setLabel('Close').setStyle(ButtonStyle.Danger));
-  const rows = [row];
-  if (ticket.kind === 'application' && ticket.state !== 'closed') rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`goat:ticket:approve:${ticket.id}`).setLabel('Approve').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`goat:ticket:reject:${ticket.id}`).setLabel('Reject').setStyle(ButtonStyle.Secondary)));
-  return rows;
+  if (ticket.kind === 'application' && ticket.state !== 'closed') row.addComponents(
+    new ButtonBuilder().setCustomId(`goat:ticket:start-vote:${ticket.id}`).setLabel('Start Vote').setStyle(ButtonStyle.Success)
+      .setDisabled(review?.started_at != null || !!review?.decision));
+  return [row];
 }
 const kindName = (kind: TicketKind) => kind === 'application' ? 'Clan Application' : 'Support';
 
@@ -86,10 +86,15 @@ export class TicketService {
   readonly votes: TicketVoteService;
   constructor(private readonly ctx: Context) {
     this.votes = new TicketVoteService(ctx);
-    ctx.db.run("UPDATE ticket_reviews SET dirty=1,last_update=0 WHERE ticket_id IN (SELECT id FROM tickets WHERE guild_id=?) AND state IN ('voting','review','deciding')", ctx.guild.id);
+    ctx.db.run("UPDATE ticket_reviews SET dirty=1,last_update=0 WHERE ticket_id IN (SELECT id FROM tickets WHERE guild_id=?) AND state IN ('waiting','voting','review','deciding')", ctx.guild.id);
   }
-  start(): void { if (this.ctx.config.tickets.enabled) this.timer = setInterval(() => { void this.tick(); }, 2000); }
-  stop(): void { if (this.timer) clearInterval(this.timer); }
+  start(): void {
+    if (this.ctx.config.tickets.enabled) {
+      this.timer = setInterval(() => { void this.tick(); }, 1000);
+      this.votes.startWorker();
+    }
+  }
+  stop(): void { if (this.timer) clearInterval(this.timer); this.votes.stop(); }
   get(id: number): TicketRow {
     const ticket = this.ctx.db.get<TicketRow>('SELECT * FROM tickets WHERE id=? AND guild_id=?', id, this.ctx.guild.id);
     if (!ticket) throw new UserError('Ticket not found.');
@@ -249,7 +254,6 @@ export class TicketService {
       this.ctx.db.run("UPDATE tickets SET state='open',opening_message_id=?,error=NULL,retry_at=0 WHERE id=?", opening!.id, ticket.id);
       this.log(ticket, 'Ticket Opened', ticket.owner_id, `**${kindName(ticket.kind)}** • Roblox \`@${ticket.roblox_username ?? 'Not supplied'}\`\nOpened ${stamp(ticket.created_at)}`, `ticket-open:${ticket.id}`);
     });
-    this.votes.queue(this.get(ticket.id));
   }
   private log(ticket: TicketRow, title: string, actorId: string, details: string, key: string): void {
     const embed = goatEmbed(title, colors.cyan).setDescription(details).addFields(
@@ -271,15 +275,25 @@ export class TicketService {
       ticket.kind === 'application' ? applicationRequirements() : goatEmbed('Support', colors.cyan)
         .setDescription('Describe what you need help with. Add screenshots if they help explain the problem.').setThumbnail('attachment://goat-banner.png');
     embed.setTitle(`GOAT • ${label} #${String(ticket.id).padStart(4, '0')}`).setTimestamp(null)
-      .setFooter({ text: closed ? 'GOAT • Conversation saved' : 'GOAT • Keep the conversation in this ticket' })
-      .addFields({ name: 'Roblox username', value: `\`@${ticket.roblox_username ?? 'Not supplied before update'}\`` });
-    return { embeds: [embed], components: controls(ticket), files: closed ? [] : [new AttachmentBuilder(resolve(
+      .setFooter({ text: closed ? 'GOAT • Conversation saved' : 'GOAT • Keep the conversation in this ticket' });
+    embed.setDescription(`## @${ticket.roblox_username ?? 'Not supplied before update'}\n${embed.data.description ?? ''}`);
+    return { embeds: [embed], components: ticketControls(ticket, review), files: closed ? [] : [new AttachmentBuilder(resolve(
       ticket.kind === 'application' ? 'assets/application-mastery-example.png' : 'assets/goat-banner.png'))], allowedMentions: noMentions };
   }
-  private async refreshControls(ticket: TicketRow): Promise<void> {
+  private async refreshControls(ticket: TicketRow, full = true): Promise<void> {
     if (!ticket.opening_message_id) return;
     const channel = await this.channel(ticket);
-    try { const message = await channel.messages.fetch(ticket.opening_message_id); await message.edit({ ...this.introduction(ticket), attachments: [] }); }
+    try {
+      const message = await channel.messages.fetch(ticket.opening_message_id);
+      if (!full) await message.edit({ components: ticketControls(ticket, this.votes.get(ticket.id)), allowedMentions: noMentions });
+      else {
+        const { files, ...payload } = this.introduction(ticket);
+        const image = ticket.kind === 'application' ? 'application-mastery-example.png' : 'goat-banner.png';
+        if (ticket.state === 'closed') await message.edit({ ...payload, attachments: [] });
+        else if (message.attachments.some(file => file.name === image)) await message.edit(payload);
+        else await message.edit({ ...payload, files, attachments: [] });
+      }
+    }
     catch (err) {
       if (errorCode(err) !== 10008) throw err;
       const replacement = await channel.send({ ...this.introduction(ticket), nonce: `controls-${ticket.id}-${ticket.revision}`, enforceNonce: true });
@@ -292,7 +306,9 @@ export class TicketService {
     if (!/^\d+$/.test(id)) throw new UserError('Ticket not found.');
     const ticket = this.get(Number(id));
     if (action === 'vote-yes' || action === 'vote-no') { await this.votes.vote(interaction, ticket.id, action === 'vote-yes' ? 'yes' : 'no'); return; }
-    if (action === 'approve' || action === 'reject') { await this.votes.decisionModal(interaction, ticket.id, action === 'approve' ? 'accepted' : 'rejected'); return; }
+    if (action === 'start-vote') { await this.votes.start(interaction, ticket.id); return; }
+    if (action === 'approve' || action === 'reject') throw new UserError('These old buttons have been replaced. Use /ticket-approve or /ticket-reject.');
+    if (action !== 'close' && action !== 'delete') await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.access(interaction, ticket, action === 'claim' || action === 'delete' || action === 'delete-confirm' || (action === 'reopen' && !!this.votes.get(ticket.id)?.decision));
     if (action === 'close') {
       if (ticket.state !== 'open') throw new UserError('This ticket is already closed or is being updated.');
@@ -306,14 +322,14 @@ export class TicketService {
         components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(`goat:ticket:delete-confirm:${ticket.id}`)
           .setLabel('Delete Ticket').setStyle(ButtonStyle.Danger))] }); return;
     }
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.mutex.run(`ticket:${ticket.id}`, async () => {
       const fresh = this.get(ticket.id);
       if (action === 'claim') {
         if (fresh.state !== 'open') throw new UserError('Only an open ticket can be claimed.');
         if (fresh.claimed_by && fresh.claimed_by !== interaction.user.id) throw new UserError('This ticket has already been claimed.');
         this.ctx.db.run('UPDATE tickets SET claimed_by=? WHERE id=?', interaction.user.id, ticket.id);
-        await this.refreshControls(this.get(ticket.id));
+        await this.refreshControls(this.get(ticket.id), false);
         this.log(fresh, 'Ticket Claimed', interaction.user.id, `Assigned to <@${interaction.user.id}>.`, `ticket-claim:${ticket.id}:${fresh.revision}`);
         await interaction.editReply({ content: 'Ticket claimed.', allowedMentions: noMentions }); return;
       }

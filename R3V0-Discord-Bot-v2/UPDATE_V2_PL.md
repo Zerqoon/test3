@@ -1,16 +1,16 @@
-# GOAT 2.1 — aktualizacja GitHub + Railway
+# GOAT 2.2 — aktualizacja GitHub + Railway
 
-Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **INSTALL-AND-UPLOAD-GOAT.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.1.0**.
+Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **FIX-GOAT-INSTALL.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.2.0**.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\zerqo\Downloads\INSTALL-AND-UPLOAD-GOAT.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\zerqo\Downloads\FIX-GOAT-INSTALL.ps1"
 ```
 
 Skrypt wybierze najnowszy ZIP, sprawdzi wersję i obecność systemu głosowania, zaktualizuje `C:\Users\zerqo\Desktop\GOAT-Clan-Bot`, a następnie podmieni `R3V0-Discord-Bot-v2` w repozytorium **Zerqoon/test3**, wykona commit i zwykły push do `main`. Wysyła źródła bezpośrednio z rozpakowanego ZIP-a. Zachowuje lokalną bazę i `.env`; token oraz baza nie trafiają na GitHub. Potrzebny jest Git for Windows i możliwość zalogowania do GitHuba. Na końcu otrzymasz SHA wysłanego commitu.
 
 Jeżeli pliki są w innym folderze, podaj pełną ścieżkę skryptu oraz `-ZipPath "pełna ścieżka do ZIP-a"`. Alternatywnie rozpakuj projekt i uruchom dołączony `UPLOAD-GITHUB.ps1` z parametrem `-SourceDirectory` wskazującym folder zawierający `package.json`.
 
-W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.1.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
+W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.2.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
 
 Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployment-actions), [GitHub Autodeploys](https://docs.railway.com/deployments/github-autodeploys), [Keyboard Shortcuts](https://docs.railway.com/overview/keyboard-shortcuts).
 
@@ -25,7 +25,7 @@ Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployme
 | Replicas | `1` |
 | Serverless | Wyłączone |
 
-Baza aktualizuje się automatycznie do schematu 3. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
+Baza aktualizuje się automatycznie do schematu 5. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
 
 ## Ticket i głosowanie
 
@@ -41,16 +41,19 @@ Aplikacja otrzymuje **jeden embed** z username i checklistą:
 2. Gamepasses.
 3. Inventory.
 4. Stats.
+5. **Can you be AFK 24/7?** — odpowiedź Yes / No w tickecie.
 
-Dla nowej aplikacji na `1557433699572777000` pojawia się Discord nickname, Roblox username oraz **Vote Yes / Vote No**. Głosowanie trwa **10 minut**, wymaga **minimum 3 głosów**, a większość Yes przyjmuje aplikację; większość No odrzuca. Pierwszy klik nie kończy głosowania. Remis lub zbyt mało głosów pozostawia ticket do ręcznej decyzji. Support służy prywatnej pomocy i nie jest objęty głosowaniem.
+Przyciski aplikacji są w jednym rzędzie: **Claim · Close · Start Vote**. Roblox username jest wyróżniony na samej górze embeda. Support ma Claim i Close.
 
-Każdy członek serwera będący człowiekiem, poza aplikującym, ma jeden głos i może go zmienić. Głosy osób, które wyszły z serwera, są odrzucane podczas końcowego liczenia. `tickets.voting.voterRoleIds` pozwala ograniczyć głosowanie do wskazanych ról; bot sprawdza rolę przy kliknięciu i ponownie na końcu.
+Głosowanie nie zaczyna się przy otwarciu ticketu. Administracja uruchamia je przyciskiem **Start Vote** albo `/ticket-start-vote`. Dopiero wtedy pojawia się panel **Vote Yes / Vote No** na `1557433699572777000` i zaczyna się **3-minutowy licznik**. **3 Yes od razu akceptują**, **3 No od razu odrzucają** aplikację. Po 3 minutach wygrywa przewaga oddanych głosów, nawet 1:0. **Remis lub brak głosów** zostawia decyzję administracji. Kolejne kliknięcie Start Vote i restart nie wydłużają terminu.
 
-**Approve / Reject** w tickecie oraz `/ticket-approve reason:...` i `/ticket-reject reason:...` są dostępne tylko skonfigurowanej administracji i osobistemu dostępowi właściciela. Uzasadnienie trafia do DM aplikującego. Decyzja automatyczna lub ręczna zamyka ticket do odczytu i wysyła angielski embed DM z wynikiem, powodem i wykonawcą. Zamknięte DM nie zatrzymują decyzji. Akceptacja nie nadaje automatycznie roli klanowej.
+Każdy członek widzący panel, poza aplikującym i botami, ma jeden głos i może go zmienić przed zakończeniem. Nie ma wymogu dodatkowej roli ani minimalnej frekwencji. Wyjście kogoś z serwera nie usuwa już oddanego głosu. Starsze opcje `durationSeconds`, `minimumVotes` i `voterRoleIds` nie zmieniają nowych stałych zasad 180 sekund / 3 głosy.
+
+**Approve / Reject zostały usunięte z ticketu**. Ręczna decyzja pozostaje przez `/ticket-approve reason:...` i `/ticket-reject reason:...`, z aktualnym sprawdzeniem uprawnień. Wynik zapisuje się przed operacjami Discorda; ticket zostaje zamknięty do odczytu, rozmowa trafia do logów i bot wysyła angielski embed DM z wynikiem, powodem i wykonawcą. Zamknięte DM nie blokują decyzji. Akceptacja nie nadaje automatycznie roli klanowej.
 
 Głosy, wynik, etap zamykania i dostarczenie DM są zapisane w SQLite. Po restarcie bot wznawia pracę. Zakończona decyzja nie jest losowana ani liczona ponownie. Niepewne wysyłki używają nonce Discorda; przy długiej awarii na granicy wysyłki i zapisu nadal może być potrzebne ręczne sprawdzenie DM.
 
-Starsze tickety dostają poprawiony wygląd. Te, które powstały przed formularzem i nie mają Roblox username, nie są automatycznie poddawane głosowaniu. Administracja może rozstrzygnąć je ręcznie.
+Starsze tickety dostają nowy wygląd w tej samej wiadomości. Nierozstrzygnięte głosowania starego automatycznego systemu czekają teraz na Start Vote, z zachowaniem zapisanych głosów. Rozpoczęte już decyzje kończą się bez ponownego liczenia. Aktualizacja nie zeruje statystyk ani granicy nowych osób do przypomnień.
 
 ## Czytelne logi
 
@@ -63,20 +66,33 @@ Starsze tickety dostają poprawiony wygląd. Te, które powstały przed formular
 
 Log zamknięcia ticketu pokazuje powód, wynik, osoby, czas i **treść rozmowy bezpośrednio w embedzie**. Przy długiej rozmowie widać ostatnich osiem wiadomości; pełna chronologiczna historia jest w załączniku **TXT**, bez HTML. Zachowane są również usunięte wiadomości, które bot wcześniej zaobserwował. Linki do załączników Discorda mogą wygasnąć.
 
-Logi grupują do pięciu embedów w jednej wiadomości po około 8 sekundach, w granicach limitów Discorda. Własne rutynowe autorole, poprawki nicków i operacje tworzenia ticketów nie wywołują osobnych logów administracyjnych. Dopisanie podglądu GIF-a nie powoduje dodatkowego logu edycji. Użytkowe wiadomości bota i jego logi nie generują pętli logowania.
+Przyciski i komendy potwierdzają interakcję przed dłuższymi operacjami. Wstępne pobranie wszystkich członków działa w tle; logi startują od razu. Logi usunięć korzystają z zapisanej treści bez czekania na audyt. Częściowe edycje używają bazy również wtedy, gdy wiadomość wypadła z pamięci Discord.js. `/goat-status` pokazuje błędy dostarczania logów; zablokowany kanał nie zatrzymuje innych kanałów.
+
+Logi grupują do pięciu embedów w jednej wiadomości po około 0,7 sekundy, w granicach limitów Discorda. Własne rutynowe autorole, poprawki nicków i operacje tworzenia ticketów nie wywołują osobnych logów administracyjnych. Dopisanie podglądu GIF-a nie powoduje dodatkowego logu edycji. Użytkowe wiadomości bota i jego logi nie generują pętli logowania.
 
 | Obsługa ticketów | Działanie |
 | --- | --- |
 | `/ticket-panel`, `/ticket-list` | Naprawienie panelu / prywatna lista |
 | Claim | Przejęcie przez obsługę |
 | Close, `/ticket-close reason:...` | Zamknięcie z powodem; wycofanie aplikacji anuluje jej głosowanie |
-| Approve / Reject, `/ticket-approve`, `/ticket-reject` | Ręczna decyzja aplikacji |
+| Start Vote, `/ticket-start-vote` | Uruchomienie głosowania przez administrację |
+| `/ticket-approve`, `/ticket-reject` | Ręczna decyzja aplikacji |
 | `/ticket-add`, `/ticket-remove` | Zmiany dostępu konkretnej osoby |
 | Reopen | Ponowne otwarcie, gdy użytkownik nie ma innego aktywnego ticketu; po przyjęciu lub odrzuceniu tylko administracja |
 | Delete | Tylko administracja, po potwierdzonym dostarczeniu całej rozmowy do Ticket Logs |
 | `/ticket-repair` | Odtworzenie prywatnych uprawnień |
 
 Zamknięte kanały pozostają tylko do odczytu do czasu użycia Delete. Błąd odczytu rozmowy albo dostarczenia logu blokuje usunięcie. Komendy, przyciski i formularze administracyjne sprawdzają aktualne uprawnienia.
+
+## Widoczność komend
+
+`/messages`, `/leaderboard` i alias `/leadboard` oraz `/help` są dostępne wszystkim i publikują odpowiedź na kanale. Komendy są rejestrowane bez domyślnego ograniczenia do roli administratora. Działania administracyjne nadal wymagają skonfigurowanego dostępu sprawdzanego przez bota. Jeśli Discord ukrywa komendę na serwerze, sprawdź **Use Application Commands** w uprawnieniach kanału oraz **Server Settings → Integrations → GOAT** i usuń stare ograniczenia odpowiednich komend.
+
+## Tworzenie embedów
+
+`/embed [channel] [ping-role] [ping-user]` otwiera angielski formularz z tytułem, wiadomością w embedzie, wiadomością poza embedem, adresem HTTPS obrazka i kolorem HEX, np. `#22D3EE`. Kanał domyślny to kanał wywołania komendy. Rola i osoba są opcjonalne, wybierane przez natywne pickery Discorda. Bot automatycznie dopisuje wybrane pingi nad embedem; nie pinguje niewybranych ról, osób ani @everyone wpisanego w tekst. Dostęp działa przez dotychczasowe ustawienia administracji.
+
+Po wysłaniu formularza bot publikuje embed i prywatnie pokazuje link do wiadomości. Przy problemie z wysyłką zachowuje wiadomość w bazie i ponawia próbę, również po restarcie. Powtórzona wysyłka tego samego formularza nie tworzy dodatkowej wiadomości. Rola musi być mentionable albo bot musi mieć uprawnienie Mention Everyone. `/goat-status` pokazuje liczbę oczekujących embedów.
 
 ## Pozostałe systemy
 

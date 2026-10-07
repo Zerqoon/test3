@@ -1,0 +1,17 @@
+import { existsSync } from 'node:fs';
+import { assertPersistentDatabase, config, env } from '../src/core/config.js';
+import { commandDefinitions } from '../src/commands/definitions.js';
+console.log('GOAT • Local diagnostics');
+console.log(`Node.js: ${process.version}`);
+console.log(`Token: ${env.token && env.token !== 'PASTE_YOUR_BOT_TOKEN_HERE' ? 'Configured (hidden)' : 'Not configured — set DISCORD_TOKEN in Railway Variables or .env'}`);
+console.log(`Database: ${env.databasePath}`);
+assertPersistentDatabase();
+if (process.env.RAILWAY_ENVIRONMENT_ID) console.log('Railway: database path is inside the attached volume');
+console.log(`Guild: ${env.guildId ? 'Configured' : 'Auto-detection enabled'}`);
+console.log(`Config: valid • timezone: ${config.timezone}`);
+console.log(`Banner: ${existsSync('assets/goat-banner.png') ? 'OK' : 'MISSING'}`);
+console.log(`Font: ${existsSync('assets/fonts/DejaVuSans-Bold.ttf') ? 'OK' : 'MISSING'}`);
+console.log(`Commands: ${commandDefinitions.length} definitions validated`);
+for (const c of commandDefinitions) c.toJSON();
+console.log('Enable Server Members Intent and Message Content Intent in Developer Portal > Bot.');
+console.log('Place the bot role above the clan/member roles it needs to rename or moderate.');

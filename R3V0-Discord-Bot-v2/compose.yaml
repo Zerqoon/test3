@@ -1,0 +1,11 @@
+services:
+  goat:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    init: true
+    volumes:
+      - goat-data:/app/data
+      - ./config.json:/app/config.json:ro
+volumes:
+  goat-data:

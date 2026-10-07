@@ -3,13 +3,17 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
     "strict": true,
-    "skipLibCheck": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
-    "rootDir": "src",
-    "outDir": "dist",
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
     "sourceMap": true,
-    "forceConsistentCasingInFileNames": true
+    "rootDir": ".",
+    "outDir": "dist"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
 }

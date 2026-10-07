@@ -1,248 +1,93 @@
-import { createServer } from "node:http";
-import {
-  Client,
-  Events,
-  GatewayIntentBits,
-  Partials,
-  ActivityType,
-} from "discord.js";
-import { credentials, env, config } from "./config.js";
-import { Store } from "./services/store.js";
-import { Logs } from "./services/logs.js";
-import { registerCommands } from "./services/registration.js";
-import { interactionEvents } from "./events/interactions.js";
-import { messageEvents } from "./events/messages.js";
-import { guildEvents } from "./events/guild.js";
-import { logger } from "./utils/logger.js";
-import { backup } from "./services/backup.js";
-import type { Context } from "./types.js";
-import { RobloxVerification } from "./services/verification.js";
-import { NewAccountProtection } from "./services/protection.js";
-import { VoiceManager } from "./services/voice.js";
+import { Client, Events, GatewayIntentBits, Partials, ActivityType, REST, Routes, Options } from 'discord.js';
+import pino from 'pino';
+import { assertPersistentDatabase, config, env, requireToken } from './core/config.js';
+import { Store } from './core/store.js';
+import { InstanceLease } from './core/lease.js';
+import type { Context } from './core/types.js';
+import { errorText } from './core/util.js';
+import { commandDefinitions } from './commands/definitions.js';
+import { LogService } from './services/logs.js';
+import { HistoryService } from './services/history.js';
+import { UsernameService } from './services/usernames.js';
+import { NicknameService } from './services/nicknames.js';
+import { GiveawayService } from './services/giveaways.js';
+import { ModerationService } from './services/moderation.js';
+import { AuditService } from './services/audit.js';
+import { installEvents } from './events/install.js';
+import { goatEmbed, colors } from './core/embeds.js';
+import { maintain } from './services/maintenance.js';
 
-async function main() {
-  const c = credentials();
-  const store = new Store(env.DATABASE_PATH);
-  const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-      GatewayIntentBits.GuildModeration,
-      GatewayIntentBits.GuildVoiceStates,
-    ],
-    partials: [Partials.Message, Partials.Channel, Partials.GuildMember],
-    allowedMentions: { parse: [] },
-  });
-  const logs = new Logs(client, store);
-  const core = { client, store, logs, startedAt: Date.now() };
-  const ctx: Context = {
-    ...core,
-    verification: new RobloxVerification(core),
-    protection: new NewAccountProtection(core),
-    voice: new VoiceManager(core),
-  };
-  let initialized = false;
-  let stopping = false;
-  let disconnectedAt: number | undefined;
-  const timers: NodeJS.Timeout[] = [];
-  const health = createServer((req, res) => {
-    if (req.url !== "/health" && req.url !== "/health/live") {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-    const ready = initialized && client.isReady() && !stopping;
-    res.writeHead(req.url === "/health/live" || ready ? 200 : 503, {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    });
-    res.end(
-      JSON.stringify({
-        status: ready ? "ready" : "starting",
-        uptime: Math.floor(process.uptime()),
-      }),
-    );
-  });
-  health.listen(env.PORT, "0.0.0.0");
-  async function stop(exitCode = 0) {
-    if (stopping) return;
-    stopping = true;
-    initialized = false;
-    for (const timer of timers) clearInterval(timer);
-    // Every economy operation commits before its Discord response; unsent logs remain in SQLite.
-    logs.stop();
-    ctx.voice.stop();
-    await client.destroy();
-    await new Promise<void>((resolve) => health.close(() => resolve()));
-    if (store.db.open) {
-      store.db.pragma("wal_checkpoint(TRUNCATE)");
-      store.close();
-    }
-    process.exit(exitCode);
-  }
-  process.once("SIGTERM", () => {
-    void stop();
-  });
-  process.once("SIGINT", () => {
-    void stop();
-  });
-  process.on("unhandledRejection", (err) => {
-    logger.fatal({ err }, "Nieobsłużony błąd asynchroniczny");
-    void stop(1);
-  });
-  client.on(Events.Error, (err) =>
-    logger.error({ err }, "Błąd klienta Discord"),
-  );
-  client.on(Events.Warn, (message) =>
-    logger.warn({ message }, "Ostrzeżenie Discord"),
-  );
-  client.on(Events.ShardDisconnect, () => {
-    disconnectedAt ??= Date.now();
-    ctx.voice.resetSessions();
-  });
-  client.on(Events.ShardResume, () => {
-    disconnectedAt = undefined;
-  });
-  interactionEvents(ctx);
-  messageEvents(ctx);
-  guildEvents(ctx);
-  ctx.voice.attach();
-  client.once(Events.ClientReady, async (ready) => {
-    try {
-      const guild = await client.guilds.fetch(c.DISCORD_GUILD_ID);
-      await guild.roles.fetch();
-      if (env.AUTO_REGISTER_COMMANDS === "true") await registerCommands(store);
-      ready.user.setPresence({
-        activities: [
-          {
-            name: `/pomoc • ${config.brand.name}`,
-            type: ActivityType.Watching,
-          },
-        ],
-        status: "online",
-      });
-      initialized = true;
-      logs.start();
-      store.cleanup();
-      void ctx.voice
-        .start(guild)
-        .catch((err) =>
-          logger.warn({ err }, "Nie udało się uruchomić obsługi voice"),
-        );
-      void (async () => {
-        // Optional integrations cannot prevent health checks or core command registration.
-        if (config.protection.enabled)
-          await ctx.protection
-            .setup(guild)
-            .catch((err) =>
-              logger.warn(
-                { err },
-                "Uruchom /setup, aby naprawić ochronę kanałów",
-              ),
-            );
-        await ctx.verification
-          .setup(guild)
-          .catch((err) =>
-            logger.warn({ err }, "Panel weryfikacji wymaga /setup-weryfikacja"),
-          );
-        if (config.temporaryVoice.enabled)
-          await ctx.voice
-            .setup(guild)
-            .catch((err) =>
-              logger.warn({ err }, "Panel voice wymaga /setup-voice"),
-            );
-      })();
-      timers.push(
-        setInterval(() => {
-          if (client.isReady())
-            void ctx.protection
-              .sweep(guild)
-              .catch((err) => logger.warn({ err }, "Przegląd kwarantanny"));
-        }, 60000),
-      );
-      const scheduledBackup = async () => {
-        const last = Number(store.setting("last-backup") ?? 0);
-        if (Date.now() - last < 86400000) return;
-        const file = await backup(store);
-        if (file && store.db.open)
-          store.setSetting("last-backup", String(Date.now()));
-      };
-      void scheduledBackup().catch((err) =>
-        logger.warn({ err }, "Błąd automatycznej kopii bazy"),
-      );
-      timers.push(
-        setInterval(() => {
-          try {
-            store.cleanup();
-          } catch (err) {
-            logger.error({ err }, "Błąd retencji danych");
-          }
-        }, 3600000),
-      );
-      timers.push(
-        setInterval(() => {
-          void scheduledBackup().catch((err) =>
-            logger.warn({ err }, "Błąd automatycznej kopii bazy"),
-          );
-        }, 3600000),
-      );
-      timers.push(
-        setInterval(() => {
-          if (client.isReady()) disconnectedAt = undefined;
-          else disconnectedAt ??= Date.now();
-          if (disconnectedAt && Date.now() - disconnectedAt > 300000) {
-            logger.error("Brak połączenia Discord przez 5 minut; restart");
-            void stop(1);
-          }
-        }, 30000),
-      );
-      logger.info({ bot: ready.user.tag, guildId: guild.id }, "Bot gotowy");
-      // Reconcile who is currently in the guild. Do not grant roles to everyone at startup.
-      void guild.members
-        .fetch()
-        .then(async (members) => {
-          store.db.transaction(() => {
-            store.db
-              .prepare("UPDATE profiles SET active=0 WHERE guild_id=?")
-              .run(guild.id);
-            for (const m of members.values())
-              if (!m.user.bot)
-                store.member(guild.id, m.id, true, m.displayName);
-          })();
-          for (const member of members.values()) {
-            if (stopping) return;
-            if (member.user.bot) continue;
-            await ctx.protection
-              .apply(member)
-              .catch((err) =>
-                logger.warn(
-                  { err, userId: member.id },
-                  "Ochrona nowego konta wymaga sprawdzenia",
-                ),
-              );
-          }
-        })
-        .catch((err) =>
-          logger.warn({ err }, "Nie udało się odświeżyć listy członków"),
-        );
-    } catch (err) {
-      logger.fatal({ err }, "Błąd uruchomienia");
-      await stop(1);
-    }
-  });
-  try {
-    await client.login(c.DISCORD_TOKEN);
-  } catch (err) {
-    logger.fatal(
-      { err },
-      "Nie udało się zalogować bota. Sprawdź token i privileged intents.",
-    );
-    await stop(1);
-  }
-}
-void main().catch((err) => {
-  logger.fatal({ err }, "Nie udało się uruchomić aplikacji");
-  process.exitCode = 1;
+requireToken();
+assertPersistentDatabase();
+const logger = pino({ level: env.logLevel, redact: ['token', 'authorization', 'headers.authorization'] });
+const db = new Store(env.databasePath);
+const lease = new InstanceLease(db);
+lease.acquire();
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  partials: [Partials.Message, Partials.Channel, Partials.GuildMember],
+  makeCache: Options.cacheWithLimits({ ...Options.DefaultMakeCacheSettings, MessageManager: 100 }),
+  allowedMentions: { parse: [], repliedUser: false }
 });
+let ctx: Context | undefined;
+let exiting = false;
+let maintenanceTimer: NodeJS.Timeout | undefined;
+async function shutdown(code = 0): Promise<void> {
+  if (exiting) return;
+  exiting = true;
+  if (ctx) {
+    ctx.stopping = true;
+    ctx.logs.stop(); ctx.history.stop(); ctx.usernames.stop(); ctx.giveaways.stop(); ctx.moderation.stop();
+  }
+  if (maintenanceTimer) clearInterval(maintenanceTimer);
+  lease.release();
+  await client.destroy();
+  // Interrupted jobs recover from their durable checkpoints on the next startup.
+  logger.info('GOAT stopped');
+  process.exit(code);
+}
+lease.heartbeat(() => { logger.fatal('GOAT database lease lost'); void shutdown(1); });
+process.on('SIGINT', () => { void shutdown(); });
+process.on('SIGTERM', () => { void shutdown(); });
+process.on('uncaughtException', err => { logger.fatal({ error: errorText(err) }, 'GOAT fatal error'); void shutdown(1); });
+process.on('unhandledRejection', err => { logger.fatal({ error: errorText(err) }, 'GOAT unhandled rejection'); void shutdown(1); });
+client.on(Events.Error, err => logger.error({ error: errorText(err) }, 'GOAT Discord client error'));
+client.on(Events.ShardDisconnect, event => {
+  if (event.code === 4014) logger.error('GOAT: enable Server Members Intent and Message Content Intent in Developer Portal > Bot.');
+});
+client.once(Events.ClientReady, ready => {
+  void (async () => {
+    const usernameChannel = await ready.channels.fetch(config.channels.usernames);
+    if (!usernameChannel || !('guild' in usernameChannel)) throw new Error('GOAT cannot access the configured username channel. Check the bot invite and channel ID.');
+    const guild = usernameChannel.guild;
+    if (env.guildId && guild.id !== env.guildId) throw new Error('GOAT channel IDs and GUILD_ID belong to different servers.');
+    ctx = { client, guild, config, db, logger, startedAt: Date.now(), stopping: false } as Context;
+    ctx.logs = new LogService(ctx); ctx.usernames = new UsernameService(ctx); ctx.history = new HistoryService(ctx);
+    ctx.nicknames = new NicknameService(ctx); ctx.giveaways = new GiveawayService(ctx);
+    ctx.moderation = new ModerationService(ctx); ctx.audit = new AuditService(ctx);
+    installEvents(ctx);
+    for (const id of [config.channels.logs, config.channels.welcome]) {
+      const channel = await guild.channels.fetch(id);
+      if (!channel?.isTextBased() || !('send' in channel)) throw new Error(`GOAT configured channel ${id} is not accessible or sendable.`);
+    }
+    if (config.autoRegisterCommands) {
+      const rest = new REST({ version: '10' }).setToken(env.token);
+      await rest.put(Routes.applicationGuildCommands(ready.user.id, guild.id), { body: commandDefinitions.map(c => c.toJSON()) });
+    }
+    ready.user.setPresence({ activities: [{ name: 'GOAT • Clan Community', type: ActivityType.Watching }], status: 'online' });
+    try { await guild.members.fetch(); }
+    catch (err) { logger.warn({ error: errorText(err) }, 'GOAT member preload unavailable; historical author names may use global display names'); }
+    ctx.logs.start(); ctx.usernames.start(); ctx.giveaways.start(); ctx.moderation.start();
+    maintain(ctx);
+    maintenanceTimer = setInterval(() => { if (ctx && !ctx.stopping) { try { maintain(ctx); } catch (err) { logger.warn({ error: errorText(err) }, 'GOAT maintenance will retry'); } } }, 3600000);
+    if (config.history.autoImport) { ctx.history.startTimer(); void ctx.history.run(); }
+    else ctx.usernames.releaseHistory();
+    const activeContext = ctx;
+    void ctx.nicknames.syncAll(false).catch(err => logger.warn({ error: errorText(err) }, 'GOAT initial nickname sync failed'));
+    activeContext.logs.enqueue({ embeds: [goatEmbed('System Online', colors.green).setDescription('GOAT is online. Persistent jobs have resumed; accessible message history will be imported automatically.')
+      .addFields({ name: 'Version', value: '1.0.0' }, { name: 'Message Periods', value: `${config.timezone} • Monday-based weeks` }).toJSON()] }, `online:${Date.now()}`);
+    logger.info({ guildId: guild.id, version: '1.0.0' }, 'GOAT ready');
+  })().catch(err => { logger.fatal({ error: errorText(err) }, 'GOAT startup failed'); void shutdown(1); });
+});
+client.login(env.token).catch(err => { logger.fatal({ error: errorText(err) }, 'GOAT login failed; check DISCORD_TOKEN and privileged intents'); void shutdown(1); });

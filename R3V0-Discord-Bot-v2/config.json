@@ -1,0 +1,30 @@
+{
+  "brand": "GOAT",
+  "timezone": "Europe/Warsaw",
+  "channels": {
+    "usernames": "1556640581613260810",
+    "logs": "1552635674790989865",
+    "welcome": "1552477494786138262"
+  },
+  "access": {
+    "staffRoleIds": ["1552473635271352451", "1552473673221283901"],
+    "ownerUserIds": ["1488470377993736234"]
+  },
+  "nickname": { "roleId": "1552474081054564402", "suffix": " | GOAT" },
+  "usernames": {
+    "convertExistingOnStartup": true,
+    "logLiveConversions": true,
+    "maxAttachmentBytes": 8000000,
+    "maxTotalAttachmentBytes": 24000000
+  },
+  "history": {
+    "autoImport": true,
+    "includeArchivedThreads": true,
+    "syncIntervalMinutes": 30,
+    "excludedChannelIds": [],
+    "pageDelayMs": 150
+  },
+  "logging": { "logGifs": true, "retainMessageContentDays": 0 },
+  "giveaways": { "maxDurationDays": 365, "maxWinners": 20 },
+  "autoRegisterCommands": true
+}

@@ -40,9 +40,19 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) { throw 'This script requires Windows robocopy.' }
 if ($ProjectFolder -notmatch '^[A-Za-z0-9_-]+$') { throw 'ProjectFolder must be a single directory name.' }
-foreach ($required in @('package.json', 'package-lock.json', 'Dockerfile', 'config.json', '.env.example', 'src', 'assets', 'docs/github-subfolder-ci.yml')) {
+foreach ($required in @('package.json', 'package-lock.json', 'Dockerfile', 'config.json', '.env.example', 'src', 'assets', 'docs/github-subfolder-ci.yml', 'src/services/tickets.ts', 'src/services/members.ts', 'assets/application-mastery-example.png')) {
     if (-not (Test-Path -LiteralPath (Join-Path $SourceDirectory $required))) { throw "Missing project file: $required. Extract the complete ZIP first." }
 }
+$manifest = Get-Content -LiteralPath (Join-Path $SourceDirectory 'package.json') -Raw | ConvertFrom-Json
+if (-not $manifest.PSObject.Properties['version'] -or [string]$manifest.version -notmatch '^2\.') {
+    throw 'This directory does not contain GOAT 2.0. Copy ALL contents of GOAT-Clan-Bot from the new ZIP into this directory, not just this upload script.'
+}
+$settings = Get-Content -LiteralPath (Join-Path $SourceDirectory 'config.json') -Raw | ConvertFrom-Json
+if (-not $settings.PSObject.Properties['tickets'] -or -not $settings.tickets.PSObject.Properties['enabled'] -or $settings.tickets.enabled -ne $true) {
+    throw 'Tickets are not enabled in this config.json. Use config.json from the complete GOAT 2.0 ZIP.'
+}
+Write-Host ('Source directory: ' + $SourceDirectory) -ForegroundColor Cyan
+Write-Host ('GOAT version: ' + $manifest.version + ' | Tickets: enabled') -ForegroundColor Cyan
 
 $checkout = Join-Path ([System.IO.Path]::GetTempPath()) ('goat-upload-' + [Guid]::NewGuid().ToString('N'))
 $completed = $false
@@ -87,6 +97,10 @@ try {
         Write-Host 'GOAT 2.0 uploaded. Railway can now deploy this commit.' -ForegroundColor Green
     }
     Write-Host ('Railway Root Directory: /' + $ProjectFolder) -ForegroundColor Yellow
+    $uploadedCommit = & git -C $checkout rev-parse HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to read the uploaded commit.' }
+    Write-Host ('GitHub commit: ' + ($uploadedCommit -join '')) -ForegroundColor Cyan
+    Write-Host 'Deploy this exact commit on Railway. Runtime logs should show GOAT ready with version 2.0.0.' -ForegroundColor Yellow
     Write-Host 'Keep the existing /app/data volume and Discord token in Railway Variables.' -ForegroundColor Yellow
     $completed = $true
 } catch {

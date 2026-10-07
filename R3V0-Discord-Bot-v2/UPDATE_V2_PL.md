@@ -2,16 +2,36 @@
 
 ## Wgraj projekt
 
+### Naprawa aktualizacji, gdy Railway nadal pokazuje 1.0.0
+
+Pobierz pełny `GOAT-Clan-Bot-v2-Tickets.zip` oraz `INSTALL-AND-UPLOAD-GOAT.ps1` do Pobranych. Wklej w PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\zerqo\Downloads\INSTALL-AND-UPLOAD-GOAT.ps1"
+```
+
+Skrypt wybierze najnowszy pobrany ZIP o tej nazwie, zweryfikuje wersję 2.0.0 i pliki ticketów, uzupełni projekt na Pulpicie oraz wykona upload z kodu bezpośrednio rozpakowanego z ZIP-a. Lokalna baza i `.env` są zachowane. Na końcu pokaże commit wysłany do GitHuba. Jeśli pobierasz pliki do innego folderu, podaj pełną ścieżkę skryptu oraz parametr `-ZipPath "pełna ścieżka ZIP-a"`.
+
+Log `version: 1.0.0` w Railway potwierdza uruchomiony stary kod. Porównaj commit z logiem skryptu. W usłudze Railway naciśnij **Ctrl+K → Deploy Latest Commit**, aby wdrożyć najnowszy commit podłączonej gałęzi `main`, z Root Directory `/R3V0-Discord-Bot-v2`. Zwykłe **Redeploy** odtwarza kod wybranego starego wdrożenia. Po prawidłowym uruchomieniu nowy proces zapisze `version: 2.0.0`, a panel pojawi się na `1557384522713276488`.
+
+Dokumentacja Railway: [Deployment Actions](https://docs.railway.com/deployments/deployment-actions), [GitHub Autodeploys](https://docs.railway.com/deployments/github-autodeploys), [Keyboard Shortcuts](https://docs.railway.com/overview/keyboard-shortcuts).
+
+### Standardowa aktualizacja z rozpakowanego folderu
+
 Rozpakuj ZIP. Zawartość znajdującego się w nim folderu **GOAT-Clan-Bot** skopiuj do **C:\Users\zerqo\Desktop\GOAT-Clan-Bot**. Podmień kod, a zachowaj istniejący lokalny folder `data` oraz `.env`, jeśli używasz też wersji lokalnej.
 
 Otwórz PowerShell i wklej:
 
 ```powershell
 cd "C:\Users\zerqo\Desktop\GOAT-Clan-Bot"
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\UPLOAD-GITHUB.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\UPLOAD-GITHUB.ps1" -SourceDirectory "C:\Users\zerqo\Desktop\GOAT-Clan-Bot"
 ```
 
 Potrzebny jest Git for Windows. Jeśli Git poprosi o logowanie, zaloguj się do swojego konta GitHub. Skrypt pobierze aktualną gałąź `main` z **Zerqoon/test3**, podmieni jej folder **R3V0-Discord-Bot-v2**, doda workflow sprawdzający ten podfolder i wykona zwykły commit oraz push. Pozostałe pliki repozytorium pozostaną zachowane. Token, lokalna baza i `node_modules` nie są wysyłane. Skrypt pracuje na tymczasowej kopii repozytorium; nie usuwa Twojej lokalnej bazy.
+
+Przed wysłaniem skrypt sprawdza wersję 2.x, pliki ticketów, obrazek aplikacji i włączenie ticketów w `config.json`. Wyświetla faktyczny folder źródłowy oraz wersję. Jeśli podmienisz tylko skrypt, zostawiając stare pliki bota, wysyłanie zostanie zatrzymane. Po udanym pushu pokazuje SHA commitu: właśnie ten commit powinien być wdrożony na Railway. W logu nowego procesu `GOAT ready` ma pole `version: 2.0.0`.
+
+Jeśli nie widać nowych funkcji, sprawdź na Discordzie `/ticket-panel`. Ta komenda występuje w nowym projekcie i publikuje / naprawia panel na skonfigurowanym kanale. Brak komendy może oznaczać uruchomiony starszy kod, brak rejestracji komend lub nieodświeżoną listę Discorda; porównaj commit i wersję w logu Railway. Jeżeli komenda istnieje, ale panel nie powstaje, odczytaj jej prywatny komunikat błędu i log `GOAT ticket panel needs attention` lub `GOAT ticket panel will retry` w Railway. Błąd dostępu albo niedostępny kanał Ticket Logs może zablokować publikację panelu.
 
 Na Railway pozostaw ten sam serwis i wolumen. Ustaw **Settings → Root Directory** na **`/R3V0-Discord-Bot-v2`**. Build Command i Start Command pozostaw puste — budowanie i uruchamianie obsługuje dołączony `Dockerfile`. Po pushu uruchom Deploy, jeśli automatyczne wdrażanie nie jest włączone.
 

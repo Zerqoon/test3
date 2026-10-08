@@ -18,6 +18,12 @@ const targetReason = (name: string, description: string) => new SlashCommandBuil
 // Commands remain visible so the configured owner can invoke them without any role.
 // Every privileged command, modal and button is guarded again at runtime.
 export const commandDefinitions = [
+  new SlashCommandBuilder().setName('value').setDescription('Check a current Pet Universe value with artwork and variants')
+    .addStringOption(o => o.setName('name').setDescription('Start typing a pet name and choose a suggestion').setRequired(true).setAutocomplete(true).setMinLength(1).setMaxLength(180))
+    .addStringOption(o => o.setName('variant').setDescription('Pet variant (default: Normal)').addChoices(
+      { name: 'Normal', value: 'normal' }, { name: 'Golden', value: 'golden' }, { name: 'Diamond', value: 'diamond' }))
+    .addStringOption(o => o.setName('category').setDescription('Collection (default: Pets)').addChoices(
+      { name: 'Pets', value: 'pets' }, { name: 'Charms', value: 'charms' }, { name: 'Eggs', value: 'eggs' }, { name: 'Items', value: 'items' })),
   new SlashCommandBuilder().setName('embed').setDescription('Create an embed with outside text, an image, color and optional selected ping')
     .addChannelOption(option => option.setName('channel').setDescription('Where to send it (default: this channel)').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
     .addRoleOption(option => option.setName('ping-role').setDescription('Optional role to mention'))
@@ -100,4 +106,4 @@ export const commandDefinitions = [
       .addRoleOption(o => o.setName('role').setDescription('Role to remove from the GIF exceptions').setRequired(true))),
   new SlashCommandBuilder().setName('help').setDescription('Browse commands and instructions by category')
 ].map(command => command.setDefaultMemberPermissions(null));
-export const publicCommands = new Set(['messages', 'leaderboard', 'leadboard', 'help']);
+export const publicCommands = new Set(['messages', 'leaderboard', 'leadboard', 'help', 'value']);

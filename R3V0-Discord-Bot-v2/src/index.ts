@@ -24,6 +24,7 @@ import { LinkFilterService } from './services/link-filter.js';
 import { RoleReminderService } from './services/role-reminders.js';
 import { FilterNoticeService } from './services/filter-notices.js';
 import { TemporaryMessageService } from './services/temporary-messages.js';
+import { ValueService } from './services/values.js';
 
 requireToken();
 assertPersistentDatabase();
@@ -80,6 +81,8 @@ client.once(Events.ClientReady, ready => {
     ctx.filterNotices = new FilterNoticeService(ctx);
     ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx); ctx.embeds = new EmbedService(ctx);
     ctx.linkFilter = new LinkFilterService(ctx);
+    ctx.values = new ValueService({ ...config.values, siteUrl: env.valueSiteUrl });
+    ctx.values.start();
     installEvents(ctx);
     // Interactive handlers and delivery workers become available before a full member preload.
     ctx.logs.start(); ctx.usernames.start(); ctx.giveaways.start(); ctx.moderation.start(); ctx.embeds.start();

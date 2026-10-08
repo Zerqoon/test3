@@ -54,6 +54,8 @@ export const configSchema = z.object({
       durationSeconds: z.number().int().min(60).max(604800).default(180),
       minimumVotes: z.number().int().min(1).max(1000).default(3), voterRoleIds: z.array(snowflake).default([]) }).default({})
   }).default({}),
+  values: z.object({ enabled: z.boolean().default(true), siteUrl: z.string().url().default('https://petuniverse-values.pl'),
+    cacheSeconds: z.number().int().min(5).max(300).default(30) }).default({}),
   autoRegisterCommands: z.boolean()
 }).superRefine((c, ctx) => {
   if (new Set(Object.values(c.channels)).size !== Object.values(c.channels).length) ctx.addIssue({ code: 'custom', message: 'The configured log, username and welcome channels must be different.' });
@@ -85,7 +87,8 @@ export const env = {
   guildId: process.env.GUILD_ID?.trim() ?? '',
   applicationId: process.env.APPLICATION_ID?.trim() ?? '',
   databasePath: resolveDatabasePath(),
-  logLevel: process.env.LOG_LEVEL ?? 'info'
+  logLevel: process.env.LOG_LEVEL ?? 'info',
+  valueSiteUrl: process.env.VALUE_SITE_URL?.trim() || config.values.siteUrl
 };
 export function requireToken(): void {
   if (!env.token || env.token === 'PASTE_YOUR_BOT_TOKEN_HERE') {

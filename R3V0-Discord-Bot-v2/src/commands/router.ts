@@ -28,6 +28,7 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
   if (!publicCommands.has(name)) await requireStaff(i, ctx.config);
   const reply = async (title: string, description: string) => { await i.editReply({ embeds: [goatEmbed(title).setDescription(description)], allowedMentions: noMentions }); };
   switch (name) {
+    case 'value': await ctx.values.execute(i); return;
     case 'messages': {
       const user = i.options.getUser('user') ?? i.user;
       const member = ctx.guild.members.cache.get(user.id);
@@ -210,6 +211,7 @@ export async function routeInteraction(ctx: Context, i: Interaction): Promise<vo
   if (i.guildId !== ctx.guild.id) return;
   try {
     if (i.isAutocomplete()) {
+      if (i.commandName === 'value') { await ctx.values.autocomplete(i); return; }
       if (!(await isStaff(i, ctx.config))) { await i.respond([]); return; }
       const query = String(i.options.getFocused()).toLowerCase();
       const rows = ctx.db.all<GiveawayRow>('SELECT * FROM giveaways WHERE guild_id=? ORDER BY created_at DESC LIMIT 200', ctx.guild.id)

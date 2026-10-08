@@ -38,7 +38,7 @@ test('2.5 upgrades old configs with both blacklist restrictions and registers bo
   const upgraded = configSchema.parse(legacy);
   assert.deepEqual(upgraded.tickets.clanBlacklistRoleIds, [blockedRole]);
   assert.deepEqual(upgraded.linkFilter.gifBlockedRoleIds, [blockedRole]); assert.equal(VERSION, '2.5.0');
-  assert.equal(commandDefinitions.length, 40);
+  assert.equal(commandDefinitions.length, 41);
   for (const name of ['clan-off', 'open-ticket', 'clan-status']) assert.equal(commandDefinitions.find(c => c.name === name)!.toJSON().default_member_permissions, null);
   const option = commandDefinitions.find(c => c.name === 'open-ticket')!.toJSON().options![0];
   assert.ok('min_value' in option && option.min_value === 1); assert.ok('max_value' in option && option.max_value === 20);

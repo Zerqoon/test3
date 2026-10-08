@@ -557,7 +557,7 @@ test('public activity, both leaderboard spellings and help respond visibly with 
   }
   assert.equal(lookups, 0);
   for (const definition of commandDefinitions) assert.equal(definition.toJSON().default_member_permissions, null);
-  assert.equal(commandDefinitions.length, 40); f.ctx.db.close();
+  assert.equal(commandDefinitions.length, 41); f.ctx.db.close();
 });
 
 test('privileged slash commands acknowledge before fresh authorization and deny ordinary members', async () => {

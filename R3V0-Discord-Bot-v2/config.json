@@ -113,5 +113,10 @@
   "roleUsernameDm": {
     "enabled": true,
     "roleId": "1552474081054564402"
+  },
+  "values": {
+    "enabled": true,
+    "siteUrl": "https://petuniverse-values.pl",
+    "cacheSeconds": 30
   }
 }

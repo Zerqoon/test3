@@ -134,13 +134,42 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
         { name: 'Username Jobs', value: String(pending), inline: true }, { name: 'Live Giveaways', value: String(live), inline: true },
         { name: 'Active Tickets', value: String(tickets), inline: true }, { name: 'Autorole Queue', value: String(roles), inline: true },
         { name: 'Embed Queue', value: String(embeds), inline: true },
+        { name: 'Link Filter Queue', value: String(ctx.linkFilter.pending()), inline: true },
         { name: 'Log Delivery', value: ctx.logs.health() },
         { name: 'History', value: coverage(ctx) }, { name: 'Current Task', value: ctx.history.progress },
         { name: 'Thread Coverage', value: ctx.db.meta('history_thread_warning') ?? 'No enumeration error recorded' })], allowedMentions: noMentions }); return;
     }
+    case 'message-logs': {
+      const action = i.options.getSubcommand();
+      if (action === 'test') {
+        const url = await ctx.logs.testMessageLogs(i.user.id);
+        await reply('Message Logs', `Delivery confirmed: [Open test message](${url}).\nNow edit and delete a human message in a channel GOAT can view.`);
+      } else if (action === 'retry') {
+        await reply('Message Logs', `${ctx.logs.retryMessageLogs()} saved logs queued for another attempt.`);
+      } else await i.editReply({ embeds: [await ctx.logs.messageStatus()], allowedMentions: noMentions });
+      return;
+    }
+    case 'link-filter': {
+      const action = i.options.getSubcommand();
+      if (action !== 'status') {
+        const selected = i.options.getRole('role', true);
+        const role = await ctx.guild.roles.fetch(selected.id);
+        if (!role) throw new UserError('That role no longer exists.');
+        ctx.linkFilter.setGifRole(role, action === 'allow-role', i.user.id);
+        await reply('Link Filter', action === 'allow-role' ? 'The selected role can now send GIFs. Discord invites and other unrelated links remain restricted.' : 'The GIF exception has been removed.');
+      } else {
+        const roles = ctx.linkFilter.gifRoles();
+        await i.editReply({ embeds: [goatEmbed('Link Filter').addFields(
+          { name: 'Status', value: ctx.config.linkFilter.enabled ? 'Enabled — new messages and edits.' : 'Disabled' },
+          { name: 'Allowed Link Domains', value: clip(ctx.config.linkFilter.allowedDomains.join('\n'), 1000) || 'None' },
+          { name: 'GIF Exceptions', value: clip(roles.map(role => `<@&${role}>`).join(' '), 1000) || 'No additional roles configured.' },
+          { name: 'Removal Queue', value: String(ctx.linkFilter.pending()), inline: true })], allowedMentions: noMentions });
+      }
+      return;
+    }
     case 'help': {
       const description = '**Activity**\n/messages [user]\n/leaderboard [period] [page]\n\n**Giveaway Entry**\nUse Enter Giveaway. Your private confirmation lets you leave.\n\n**Tickets**\nUse Clan Application or Support on the ticket panel.' +
-        '\n\n**GOAT Tools**\n/embed [channel] [ping-role] [ping-user]\n/giveway-create (also /giveaway-create)\n/giveaway-list • /giveaway-end • /giveaway-reroll • /giveaway-cancel\n/ban • /unban • /mute • /unmute • /warn • /warnings • /case\n/history-sync • /username-retry • /username-remove\n/nickname-sync • /autorole-sync • /welcome-preview • /goat-status\n/ticket-panel • /ticket-list • /ticket-add • /ticket-remove • /ticket-close • /ticket-start-vote • /ticket-approve • /ticket-reject • /ticket-repair';
+        '\n\n**GOAT Tools**\n/embed [channel] [ping-role] [ping-user]\n/giveway-create (also /giveaway-create)\n/giveaway-list • /giveaway-end • /giveaway-reroll • /giveaway-cancel\n/ban • /unban • /mute • /unmute • /warn • /warnings • /case\n/history-sync • /username-retry • /username-remove\n/nickname-sync • /autorole-sync • /welcome-preview • /goat-status\n/message-logs • /link-filter\n/ticket-panel • /ticket-list • /ticket-add • /ticket-remove • /ticket-close • /ticket-start-vote • /ticket-approve • /ticket-reject • /ticket-repair';
       await reply('Commands', description); return;
     }
     default: throw new UserError('This command is not registered in the current GOAT version.');

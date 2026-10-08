@@ -22,6 +22,13 @@ export const configSchema = z.object({
     batchWindowMs: z.number().int().min(0).max(60000).default(700),
     batchMaxEmbeds: z.number().int().min(1).max(10).default(5),
     ignoreRoutineBotActions: z.boolean().default(true), logSystemOnline: z.boolean().default(false) }),
+  linkFilter: z.object({ enabled: z.boolean().default(true),
+    blockInvites: z.boolean().default(true),
+    allowedDomains: z.array(z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/)).default([
+      'giphy.com', 'gph.is', 'tenor.com', 'tiktok.com', 'youtube.com', 'youtu.be', 'roblox.com'
+    ]),
+    gifAllowedRoleIds: z.array(snowflake).default([])
+  }).default({}),
   giveaways: z.object({ maxDurationDays: z.number().int().min(1).max(3650), maxWinners: z.number().int().min(1).max(20),
     defaultRoleId: snowflake.default('718165098526670948') }),
   autorole: z.object({ enabled: z.boolean(), roleId: snowflake, syncExistingOnStartup: z.boolean() })

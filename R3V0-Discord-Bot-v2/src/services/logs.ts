@@ -1,7 +1,9 @@
-import { AttachmentBuilder, type APIEmbed, type ActionRowBuilder, type ButtonBuilder, type MessageCreateOptions } from 'discord.js';
+import { AttachmentBuilder, GatewayIntentBits, type APIEmbed, type ActionRowBuilder, type ButtonBuilder, type MessageCreateOptions } from 'discord.js';
 import type { Context } from '../core/types.js';
-import { noMentions } from '../core/embeds.js';
-import { errorText } from '../core/util.js';
+import { colors, goatEmbed, noMentions } from '../core/embeds.js';
+import { clip, errorCode, errorText, stamp, UserError } from '../core/util.js';
+import { VERSION } from '../core/version.js';
+import { botMarker, snapshotMessage } from '../core/messages.js';
 
 export interface LogPayload {
   embeds: APIEmbed[];
@@ -10,7 +12,7 @@ export interface LogPayload {
   components?: ReturnType<ActionRowBuilder<ButtonBuilder>['toJSON']>[];
   files?: { name: string; base64: string }[];
 }
-interface OutboxRow { id: number; payload: string; attempts: number; created_at: number; }
+interface OutboxRow { id: number; payload: string; attempts: number; created_at: number; solo: number; }
 interface BatchRow { id: number; channel_id: string; payload: string; attempts: number; }
 
 export function embedCharacters(embeds: APIEmbed[]): number {
@@ -62,7 +64,7 @@ export class LogService {
     for (const row of candidates) {
       const p = JSON.parse(row.payload) as LogPayload;
       if ((p.channelId ?? this.ctx.config.channels.logs) !== channelId) continue;
-      if (ids.length && (result.embeds.length + p.embeds.length > this.ctx.config.logging.batchMaxEmbeds ||
+      if (ids.length && (first.solo || row.solo || result.embeds.length + p.embeds.length > this.ctx.config.logging.batchMaxEmbeds ||
         embedCharacters([...result.embeds, ...p.embeds]) > 5800 || result.files!.length + (p.files?.length ?? 0) > 10 ||
         [...result.files!, ...(p.files ?? [])].reduce((bytes, file) => bytes + file.base64.length * 0.75, 0) > 8000000 ||
         result.components!.length + (p.components?.length ?? 0) > 5 || p.files?.some(file => names.has(file.name)))) break;
@@ -109,6 +111,18 @@ export class LogService {
         this.ctx.db.run("INSERT OR IGNORE INTO log_receipts(dedupe_key,message_id,sent_at) SELECT dedupe_key,?,? FROM log_outbox WHERE batch_id=? AND dedupe_key LIKE 'ticket-transcript:%'", message.id, now, batch.id);
       });
     } catch (err) {
+      const code = errorCode(err);
+      const badPayload = code === 50035 || code === 50006 || code === 40005 || (typeof err === 'object' && err !== null && 'status' in err && err.status === 413);
+      if (badPayload) {
+        const rows = this.ctx.db.all<{ id: number }>('SELECT id FROM log_outbox WHERE batch_id=?', batch.id);
+        this.ctx.db.transaction(() => {
+          this.ctx.db.run("UPDATE log_batches SET status=?,attempts=attempts+1,error=? WHERE id=?", rows.length > 1 ? 'superseded' : 'blocked', errorText(err), batch.id);
+          if (rows.length > 1) this.ctx.db.run("UPDATE log_outbox SET batch_id=NULL,solo=1,next_attempt=0,attempts=attempts+1,error=? WHERE batch_id=?", errorText(err), batch.id);
+          else this.ctx.db.run("UPDATE log_outbox SET status='blocked',attempts=attempts+1,error=? WHERE batch_id=?", errorText(err), batch.id);
+        });
+        this.ctx.logger.warn({ batchId: batch.id, channelId: batch.channel_id, error: errorText(err) }, rows.length > 1 ? 'GOAT invalid batch will be isolated into separate logs' : 'GOAT invalid log retained for repair; healthy logs can continue');
+        return;
+      }
       const retryAt = now + Math.min(300000, 2000 * 2 ** Math.min(batch.attempts, 8));
       this.ctx.db.transaction(() => {
         this.ctx.db.run('UPDATE log_batches SET attempts=attempts+1,next_attempt=?,error=? WHERE id=?', retryAt, errorText(err), batch.id);
@@ -117,10 +131,59 @@ export class LogService {
       this.ctx.logger.warn({ batchId: batch.id, channelId: batch.channel_id, error: errorText(err) }, 'GOAT log batch will retry');
     }
   }
-  pending(): number { return this.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM log_outbox WHERE status='pending'")!.n; }
+  pending(): number { return this.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM log_outbox WHERE status IN ('pending','blocked')")!.n; }
   health(): string {
-    const failed = this.ctx.db.all<{ channel_id: string; error: string }>("SELECT channel_id,error FROM log_batches WHERE status='pending' AND error IS NOT NULL ORDER BY id DESC LIMIT 4");
+    const failed = this.ctx.db.all<{ channel_id: string; error: string }>("SELECT channel_id,error FROM log_batches WHERE status IN ('pending','blocked') AND error IS NOT NULL ORDER BY id DESC LIMIT 4");
     return failed.length ? failed.map(row => `<#${row.channel_id}>: ${row.error.slice(0, 180)}`).join('\n') : 'No delivery error recorded.';
+  }
+  retryMessageLogs(): number {
+    const id = this.ctx.config.channels.messageLogs;
+    return this.ctx.db.transaction(() => {
+      const count = this.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM log_outbox o JOIN log_batches b ON b.id=o.batch_id WHERE b.channel_id=? AND b.status IN ('pending','blocked')", id)!.n;
+      this.ctx.db.run("UPDATE log_outbox SET status='pending',next_attempt=0 WHERE batch_id IN (SELECT id FROM log_batches WHERE channel_id=? AND status IN ('pending','blocked'))", id);
+      this.ctx.db.run("UPDATE log_batches SET status='pending',next_attempt=0 WHERE channel_id=? AND status IN ('pending','blocked')", id);
+      return count;
+    });
+  }
+  async messageStatus() {
+    const id = this.ctx.config.channels.messageLogs;
+    const embed = goatEmbed('Message Log Diagnostics').addFields({ name: 'Version', value: VERSION, inline: true },
+      { name: 'Destination', value: `<#${id}>\n\`${id}\`` });
+    const intent = this.ctx.client.options.intents;
+    embed.addFields({ name: 'Requested Gateway Intents', value: `Guild Messages: ${intent.has(GatewayIntentBits.GuildMessages) ? 'enabled' : 'MISSING'}\nMessage Content: ${intent.has(GatewayIntentBits.MessageContent) ? 'enabled' : 'MISSING'}\nMessage Content must also be enabled in Developer Portal → Bot.` });
+    try {
+      const channel = await this.ctx.guild.channels.fetch(id);
+      if (!channel?.isTextBased() || !('send' in channel)) throw new Error('The configured destination is not an accessible text channel.');
+      const me = this.ctx.guild.members.me ?? await this.ctx.guild.members.fetchMe();
+      const permissions = channel.permissionsFor(me);
+      const required = ['ViewChannel', channel.isThread() ? 'SendMessagesInThreads' : 'SendMessages', 'EmbedLinks', 'AttachFiles', 'ReadMessageHistory'] as const;
+      const missing = required.filter(permission => !permissions?.has(permission));
+      embed.addFields({ name: 'Channel Access', value: missing.length ? `Missing: ${missing.join(', ')}` : 'Ready — channel permissions verified.' });
+    } catch (err) { embed.setColor(colors.red).addFields({ name: 'Channel Access', value: clip(errorText(err), 900) }); }
+    const queued = this.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM log_outbox WHERE status IN ('pending','blocked') AND COALESCE(json_extract(payload,'$.channelId'),?)=?", this.ctx.config.channels.logs, id)!.n;
+    embed.addFields({ name: 'Queued for This Channel', value: String(queued), inline: true });
+    for (const [event, label] of [['edit', 'Last Edit Event'], ['delete', 'Last Delete Event']] as const) {
+      const at = this.ctx.db.meta(`message_${event}_observed_at`);
+      embed.addFields({ name: label, value: at ? stamp(Number(at), 'R') : 'None observed by this installation.', inline: true });
+    }
+    const failures = this.ctx.db.all<{ error: string; status: string }>("SELECT error,status FROM log_batches WHERE channel_id=? AND status IN ('pending','blocked') AND error IS NOT NULL ORDER BY id DESC LIMIT 3", id);
+    embed.addFields({ name: 'Delivery', value: failures.length ? clip(failures.map(row => `${row.status}: ${row.error}`).join('\n'), 1000) : 'No delivery error recorded.' });
+    return embed;
+  }
+  async testMessageLogs(actorId: string): Promise<string> {
+    const id = this.ctx.config.channels.messageLogs;
+    const channel = await this.ctx.guild.channels.fetch(id);
+    if (!channel?.isTextBased() || !('send' in channel)) throw new UserError(`GOAT cannot access message log channel ${id}.`);
+    const me = this.ctx.guild.members.me ?? await this.ctx.guild.members.fetchMe();
+    const permissions = channel.permissionsFor(me);
+    const required = ['ViewChannel', channel.isThread() ? 'SendMessagesInThreads' : 'SendMessages', 'EmbedLinks'] as const;
+    const missing = required.filter(permission => !permissions?.has(permission));
+    if (missing.length) throw new UserError(`Message log channel ${id}: missing ${missing.join(', ')}.`);
+    const message = await channel.send({ allowedMentions: noMentions,
+      embeds: [goatEmbed('Message Logs · Delivery Test', colors.green).setDescription('GOAT can deliver embeds to this message log channel.')
+        .addFields({ name: 'Version', value: VERSION, inline: true }, { name: 'Requested By', value: `<@${actorId}>`, inline: true })] });
+    this.ctx.db.recordMessage(botMarker(snapshotMessage(message)), 'live');
+    return `https://discord.com/channels/${this.ctx.guild.id}/${id}/${message.id}`;
   }
 }
 export function textEvidence(name: string, text: string): { name: string; base64: string } {

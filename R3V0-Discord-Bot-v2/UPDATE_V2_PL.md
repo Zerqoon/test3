@@ -1,6 +1,6 @@
-# GOAT 2.2 — aktualizacja GitHub + Railway
+# GOAT 2.3 — aktualizacja GitHub + Railway
 
-Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **FIX-GOAT-INSTALL.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.2.0**.
+Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **FIX-GOAT-INSTALL.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.3.0**.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\zerqo\Downloads\FIX-GOAT-INSTALL.ps1"
@@ -10,7 +10,7 @@ Skrypt wybierze najnowszy ZIP, sprawdzi wersję i obecność systemu głosowania
 
 Jeżeli pliki są w innym folderze, podaj pełną ścieżkę skryptu oraz `-ZipPath "pełna ścieżka do ZIP-a"`. Alternatywnie rozpakuj projekt i uruchom dołączony `UPLOAD-GITHUB.ps1` z parametrem `-SourceDirectory` wskazującym folder zawierający `package.json`.
 
-W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.2.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
+W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.3.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
 
 Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployment-actions), [GitHub Autodeploys](https://docs.railway.com/deployments/github-autodeploys), [Keyboard Shortcuts](https://docs.railway.com/overview/keyboard-shortcuts).
 
@@ -25,7 +25,27 @@ Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployme
 | Replicas | `1` |
 | Serverless | Wyłączone |
 
-Baza aktualizuje się automatycznie do schematu 5. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
+Baza aktualizuje się automatycznie do schematu 6. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
+
+## Nowe logi i filtr linków
+
+Po uruchomieniu sprawdź **2.3.0** w `/goat-status`, następnie użyj **`/message-logs test`**. Ta komenda wysyła jeden test bezpośrednio do **1557439487813091358**. **`/message-logs status`** prywatnie pokaże kanał, uprawnienia, czas ostatniej zaobserwowanej edycji/usunięcia i błąd dostarczenia. Po poprawieniu dostępu **`/message-logs retry`** ponowi zapisane logi.
+
+Logi korzystają z surowych zdarzeń Gateway i bazy, także gdy Discord.js nie ma już wiadomości albo kanału w pamięci. Edycje częściowe zachowują niezmienione załączniki i podglądy. Wiadomości ludzi na kanałach logów również są logowane. Wiadomości botów są oznaczane osobno, aby nie tworzyć pętli. Błędny pojedynczy wpis jest zachowywany do naprawy i nie zatrzymuje pozostałych.
+
+Bot potrzebuje dostępu do kanałów źródłowych, **Manage Messages** do usuwania oraz **View Channel / Send Messages / Embed Links / Attach Files / Read Message History** na kanale logów. **Message Content Intent** musi być włączony w Developer Portal → Bot. Treści, których bot nigdy nie dostał, oraz usunięć sprzed instalacji lub z okresu offline nie da się odzyskać z Discorda.
+
+| Wiadomość zwykłego członka | Zasada |
+| --- | --- |
+| Zaproszenie `discord.gg` / `discord.com/invite` / `discordapp.com/invite` | Usuwane; wyjątek ma dotychczasowa administracja i Twój zapisany ID |
+| TikTok / YouTube / Roblox, również prawdziwe subdomeny i `youtu.be` | Dozwolone |
+| Inna domena | Usuwana, chyba że dopiszesz domenę w `linkFilter.allowedDomains` |
+| GIF-y Tenor/Giphy, bezpośrednie linki GIF, załączniki GIF i Discord GIF-y | Wymagają administracji albo dodanej roli GIF |
+| Zwykłe screeny PNG/JPG jako załączniki | Dozwolone |
+
+**Dodawanie rang:** `/link-filter allow-role role:...` — natywny wybór roli. **Usuwanie wyjątku:** `/link-filter remove-role role:...`. **Prywatny podgląd:** `/link-filter status`. Dodatkowe role początkowo są puste; administracja ma wyjątek od razu. Zmiany ról zapisują się w SQLite i pozostają po redeployu. Rola GIF pozwala wysyłać GIF-y także z Discorda i z innych domen, ale nie daje wyjątku dla zaproszeń ani zwykłych linków spoza listy.
+
+Filtr sprawdza nowe wiadomości i edycje, zanim wpis na kanale nicków zostanie przepisany do embeda. Nie przegląda i nie usuwa zbiorowo starej historii. Sam usuwa wiadomość, bez kar i publicznych ostrzeżeń. Jeden czytelny log z powodem i pełną treścią w TXT trafia do **1557439487813091358**. Nieudane usunięcia wracają do kolejki; przed ponowieniem bot sprawdza aktualne role i treść. Podglądy dozwolonych filmów pobierane z CDN Discorda nie są traktowane jak nielegalne linki. Dowolne przekierowania zewnętrznych serwisów nie są otwierane przez bota.
 
 ## Ticket i głosowanie
 

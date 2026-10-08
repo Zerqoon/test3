@@ -1,4 +1,4 @@
-import type { Message, PartialMessage } from 'discord.js';
+import type { APIMessage, Message, PartialMessage } from 'discord.js';
 import type { MessageSnapshot } from './types.js';
 
 export function snapshotMessage(message: Message): MessageSnapshot {
@@ -28,22 +28,51 @@ export function updatedSnapshot(message: Message | PartialMessage, before?: Mess
     stickers: [...message.stickers.values()].map(sticker => ({ id: sticker.id, name: sticker.name, url: sticker.url })),
     editedAt: message.editedTimestamp ?? Date.now() };
 }
+export type RawMessageData = Partial<APIMessage> & { id: string; channel_id: string; guild_id?: string;
+  member?: { nick?: string | null }; };
+/** Gateway updates omit unchanged fields; never erase saved attachments or text. */
+export function rawSnapshot(data: RawMessageData, before?: MessageSnapshot): MessageSnapshot | undefined {
+  const authorId = data.author?.id ?? before?.authorId;
+  const guildId = data.guild_id ?? before?.guildId;
+  if (!authorId || !guildId || (!before && typeof data.content !== 'string')) return;
+  const createdAt = data.timestamp ? Date.parse(data.timestamp) : before?.createdAt ?? Number((BigInt(data.id) >> 22n) + 1420070400000n);
+  const editedAt = data.edited_timestamp ? Date.parse(data.edited_timestamp) : before?.editedAt ?? createdAt;
+  if (!Number.isFinite(createdAt) || !Number.isFinite(editedAt)) return;
+  return {
+    id: data.id, guildId, channelId: data.channel_id, authorId,
+    username: data.author?.username ?? before?.username ?? authorId,
+    displayName: data.member?.nick ?? before?.displayName ?? data.author?.global_name ?? data.author?.username ?? authorId,
+    avatarUrl: before?.avatarUrl ?? (data.author?.avatar ? `https://cdn.discordapp.com/avatars/${authorId}/${data.author.avatar}.png?size=256` : 'https://cdn.discordapp.com/embed/avatars/0.png'),
+    content: data.content ?? before?.content ?? '',
+    embeds: data.embeds ?? before?.embeds ?? [],
+    attachments: data.attachments?.map(file => ({ id: file.id, url: file.url, name: file.filename, size: file.size, contentType: file.content_type ?? null })) ?? before?.attachments ?? [],
+    stickers: data.sticker_items?.map(sticker => ({ id: sticker.id, name: sticker.name,
+      url: `https://cdn.discordapp.com/stickers/${sticker.id}.${sticker.format_type === 4 ? 'gif' : 'png'}` })) ?? before?.stickers ?? [],
+    createdAt, editedAt, bot: !!data.webhook_id || (data.author?.bot ?? before?.bot ?? false)
+  };
+}
+/** Only bot identity is needed to suppress log loops; its content is never counted. */
+export function botMarker(s: MessageSnapshot): MessageSnapshot {
+  return { ...s, content: '', embeds: [], attachments: [], stickers: [] };
+}
 export function gifMedia(s: MessageSnapshot): { links: string[]; preview?: string } {
   const links = new Set<string>();
   let preview: string | undefined;
   for (const match of s.content.matchAll(/https?:\/\/[^\s<>]+/gi)) {
     try {
       const u = new URL(match[0]);
-      if (/(^|\.)(tenor\.com|giphy\.com|gph\.is)$/.test(u.hostname) || /\.gif$/i.test(u.pathname)) links.add(u.href);
+      if (/(^|\.)(tenor\.com|giphy\.com|gph\.is)$/.test(u.hostname.replace(/\.$/, '')) || /\.gifv?$/i.test(u.pathname)) links.add(u.href);
       if (/\.gif$/i.test(u.pathname)) preview ??= u.href;
     } catch { /* Invalid text is not a media URL. */ }
   }
   for (const a of s.attachments) {
-    if (a.contentType === 'image/gif' || /\.gif$/i.test(a.name)) { links.add(a.url); preview ??= a.url; }
+    if (/^image\/gif(?:;|$)/i.test(a.contentType ?? '') || /\.gif$/i.test(a.name)) { links.add(a.url); preview ??= a.url; }
   }
   for (const e of s.embeds) {
-    const provider = `${e.provider?.name ?? ''} ${e.url ?? ''}`;
-    if (e.type === 'gifv' || /tenor|giphy/i.test(provider) || /\.gif(?:\?|$)/i.test(e.image?.url ?? '')) {
+    let gifProvider = false;
+    try { gifProvider = /(^|\.)(tenor\.com|giphy\.com|gph\.is)$/.test(new URL(e.url ?? '').hostname.replace(/\.$/, '')); }
+    catch { /* Missing or invalid provider URL. */ }
+    if (e.type === 'gifv' || gifProvider || /\.gif(?:\?|$)/i.test(e.image?.url ?? '')) {
       if (e.url) links.add(e.url);
       if (e.video?.url) links.add(e.video.url);
       preview ??= e.image?.url ?? e.thumbnail?.url;

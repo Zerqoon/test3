@@ -72,5 +72,19 @@
       "durationSeconds": 180
     }
   },
-  "autoRegisterCommands": true
+  "autoRegisterCommands": true,
+  "linkFilter": {
+    "enabled": true,
+    "blockInvites": true,
+    "allowedDomains": [
+      "giphy.com",
+      "gph.is",
+      "tenor.com",
+      "tiktok.com",
+      "youtube.com",
+      "youtu.be",
+      "roblox.com"
+    ],
+    "gifAllowedRoleIds": []
+  }
 }

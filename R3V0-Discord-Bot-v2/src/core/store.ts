@@ -120,6 +120,7 @@ export class Store {
     `);
     const logColumns = this.sqlite.prepare('PRAGMA table_info(log_outbox)').all() as { name: string }[];
     if (!logColumns.some(column => column.name === 'batch_id')) this.sqlite.exec('ALTER TABLE log_outbox ADD COLUMN batch_id INTEGER');
+    if (!logColumns.some(column => column.name === 'solo')) this.sqlite.exec('ALTER TABLE log_outbox ADD COLUMN solo INTEGER NOT NULL DEFAULT 0');
     const ticketColumns = this.sqlite.prepare('PRAGMA table_info(tickets)').all() as { name: string }[];
     if (!ticketColumns.some(column => column.name === 'permissions_dirty')) this.sqlite.exec('ALTER TABLE tickets ADD COLUMN permissions_dirty INTEGER NOT NULL DEFAULT 0');
     this.sqlite.exec("INSERT OR IGNORE INTO log_receipts(dedupe_key,message_id,sent_at) SELECT o.dedupe_key,b.message_id,o.sent_at FROM log_outbox o LEFT JOIN log_batches b ON b.id=o.batch_id WHERE o.status='sent' AND o.dedupe_key LIKE 'ticket-transcript:%'");
@@ -160,7 +161,21 @@ export class Store {
       created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, retry_at INTEGER NOT NULL DEFAULT 0,
       attempts INTEGER NOT NULL DEFAULT 0, error TEXT
     );`);
-    this.setMeta('schema_version', '5');
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS link_filter_roles (
+        guild_id TEXT NOT NULL, role_id TEXT NOT NULL, enabled INTEGER NOT NULL,
+        updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL,
+        PRIMARY KEY(guild_id,role_id)
+      );
+      CREATE TABLE IF NOT EXISTS link_filter_jobs (
+        message_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+        snapshot TEXT NOT NULL, reason TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL, error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS link_filter_pending ON link_filter_jobs(state,next_attempt);
+    `);
+    this.setMeta('schema_version', '6');
   }
   private statement(sql: string): StatementSync {
     let s = this.statements.get(sql);
@@ -180,7 +195,7 @@ export class Store {
   recordMessage(s: MessageSnapshot, origin: 'live' | 'history'): boolean {
     const inserted = this.run(`INSERT OR IGNORE INTO messages(id,guild_id,channel_id,author_id,created_at,edited_at,counted,snapshot,origin)
       VALUES(?,?,?,?,?,?,?,?,?)`, s.id, s.guildId, s.channelId, s.authorId, s.createdAt, s.editedAt, s.bot ? 0 : 1, JSON.stringify(s), origin).changes;
-    if (!inserted) this.run(`UPDATE messages SET snapshot=?,edited_at=? WHERE id=? AND edited_at<? AND deleted_at IS NULL`, JSON.stringify(s), s.editedAt, s.id, s.editedAt);
+    if (!inserted) this.run(`UPDATE messages SET snapshot=?,edited_at=? WHERE id=? AND edited_at${origin === 'live' ? '<=' : '<'}? AND deleted_at IS NULL`, JSON.stringify(s), s.editedAt, s.id, s.editedAt);
     return !!inserted;
   }
   snapshot(id: string): MessageSnapshot | undefined {

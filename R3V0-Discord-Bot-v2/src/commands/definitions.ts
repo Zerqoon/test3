@@ -69,6 +69,16 @@ export const commandDefinitions = [
   new SlashCommandBuilder().setName('ticket-repair').setDescription('Restore configured privacy permissions for GOAT tickets'),
   new SlashCommandBuilder().setName('welcome-preview').setDescription('Preview the GOAT welcome card privately'),
   new SlashCommandBuilder().setName('goat-status').setDescription('View GOAT health, queued logs and database status'),
+  new SlashCommandBuilder().setName('message-logs').setDescription('Inspect and test GOAT message log delivery')
+    .addSubcommand(s => s.setName('status').setDescription('Check the message log destination, permissions and Gateway events'))
+    .addSubcommand(s => s.setName('test').setDescription('Send one delivery test to the configured message log channel'))
+    .addSubcommand(s => s.setName('retry').setDescription('Retry saved message logs after repairing permissions')),
+  new SlashCommandBuilder().setName('link-filter').setDescription('Manage approved GOAT GIF roles')
+    .addSubcommand(s => s.setName('status').setDescription('Show the link filter and approved GIF roles'))
+    .addSubcommand(s => s.setName('allow-role').setDescription('Allow a role to send GIFs; invite links remain restricted')
+      .addRoleOption(o => o.setName('role').setDescription('Role allowed to send GIFs').setRequired(true)))
+    .addSubcommand(s => s.setName('remove-role').setDescription('Remove the GIF exception from a role')
+      .addRoleOption(o => o.setName('role').setDescription('Role to remove from the GIF exceptions').setRequired(true))),
   new SlashCommandBuilder().setName('help').setDescription('Show GOAT commands')
 ].map(command => command.setDefaultMemberPermissions(null));
 export const publicCommands = new Set(['messages', 'leaderboard', 'leadboard', 'help']);

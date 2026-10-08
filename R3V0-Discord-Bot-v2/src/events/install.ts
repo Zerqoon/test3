@@ -1,61 +1,12 @@
-import { createHash } from 'node:crypto';
-import { AuditLogEvent, Events, type GuildMember, type Message, type PartialMessage } from 'discord.js';
-import type { Context, MessageSnapshot } from '../core/types.js';
-import { completeMessage, evidence, gifMedia, snapshotMessage, updatedSnapshot } from '../core/messages.js';
+import { AuditLogEvent, Events, type GuildMember } from 'discord.js';
+import type { Context } from '../core/types.js';
 import { colors, goatEmbed, logButtons } from '../core/embeds.js';
 import { clip, errorText, humanDuration, safeText, stamp } from '../core/util.js';
-import { textEvidence } from '../services/logs.js';
+import { MessageEvents } from '../services/message-events.js';
 import { changeRoles } from '../services/audit.js';
 import { sendWelcome } from '../services/welcome.js';
 import { routeInteraction } from '../commands/router.js';
 
-function userFields(s: MessageSnapshot) {
-  return [{ name: 'Author', value: `<@${s.authorId}> • ${safeText(s.displayName, 100)}\nID: \`${s.authorId}\``, inline: true },
-    { name: 'Channel', value: `<#${s.channelId}>\nID: \`${s.channelId}\``, inline: true },
-    { name: 'Message', value: `\`${s.id}\`\nSent ${stamp(s.createdAt, 'f')}`, inline: true }];
-}
-export function messageLogChannel(ctx: Context): string { return ctx.config.channels.messageLogs; }
-function isLogChannel(ctx: Context, id: string): boolean {
-  return [ctx.config.channels.logs, ctx.config.channels.messageLogs, ctx.config.channels.memberLogs, ctx.config.tickets.logChannelId].includes(id);
-}
-function logGif(ctx: Context, s: MessageSnapshot): void {
-  if (!ctx.config.logging.logGifs || isLogChannel(ctx, s.channelId) || s.bot) return;
-  const media = gifMedia(s);
-  if (!media.links.length) return;
-  const embed = goatEmbed('GIF Sent', colors.purple).setThumbnail(s.avatarUrl)
-    .setDescription(clip(s.content || '*GIF attachment*', 2000)).addFields(...userFields(s),
-      { name: 'GIF / Media Links', value: clip(media.links.join('\n'), 1000) });
-  if (media.preview?.startsWith('https://')) embed.setImage(media.preview);
-  ctx.logs.enqueueLatest({ channelId: messageLogChannel(ctx),
-    embeds: [embed.toJSON()], files: s.content.length > 2000 ? [textEvidence(`goat-gif-${s.id}.txt`, evidence(s))] : undefined,
-    components: logButtons(s.guildId, s.channelId, s.authorId, s.id).map(r => r.toJSON()) }, `gif:${s.id}`);
-}
-function sameEditableContent(a: MessageSnapshot, b: MessageSnapshot): boolean {
-  return a.content === b.content && JSON.stringify(a.attachments.map(x => [x.id, x.name])) === JSON.stringify(b.attachments.map(x => [x.id, x.name])) &&
-    JSON.stringify(a.stickers) === JSON.stringify(b.stickers);
-}
-async function logDeleted(ctx: Context, message: Message | PartialMessage): Promise<void> {
-  if (message.guildId !== ctx.guild.id) return;
-  let s = ctx.db.snapshot(message.id);
-  if (!s && !message.partial) { s = snapshotMessage(message as Message); ctx.db.recordMessage(s, 'live'); }
-  ctx.db.markDeleted(message.id);
-  const converted = ctx.db.get<{ published_id: string | null }>('SELECT published_id FROM username_archives WHERE source_id=?', message.id);
-  if (converted?.published_id || s?.bot || isLogChannel(ctx, message.channelId) ||
-    ctx.db.get('SELECT 1 FROM temporary_messages WHERE message_id=?', message.id) ||
-    ctx.db.get('SELECT 1 FROM tickets WHERE opening_message_id=?', message.id) ||
-    ctx.db.meta('ticket_panel_message_id') === message.id) return;
-  const embed = goatEmbed('Message Deleted', colors.red);
-  if (s) {
-    embed.setThumbnail(s.avatarUrl).setDescription(clip(s.content || '*No text content*', 3000)).addFields(...userFields(s));
-    embed.addFields({ name: 'Deletion Attribution', value: ctx.audit.cachedDeletionAttribution(s.authorId, s.channelId, Date.now()) });
-  } else embed.setDescription('Content unavailable — GOAT had not observed this message before it was deleted.')
-    .addFields({ name: 'Message ID', value: `\`${message.id}\`` }, { name: 'Channel', value: `<#${message.channelId}>` });
-  if (ctx.stopping) return;
-  if (s?.attachments.length) embed.addFields({ name: 'Attachments', value: clip(s.attachments.map(file => `[${safeText(file.name, 80)}](${file.url})`).join('\n'), 900) });
-  ctx.logs.enqueue({ channelId: messageLogChannel(ctx),
-    embeds: [embed.toJSON()], files: s && (s.content.length > 3000 || s.embeds.length || s.stickers.length) ? [textEvidence(`goat-deleted-${s.id}.txt`, evidence(s))] : undefined,
-    components: logButtons(ctx.guild.id, message.channelId, s?.authorId).map(r => r.toJSON()) }, `delete:${message.id}`);
-}
 function memberDetails(member: GuildMember): string {
   return `<@${member.id}> • **${safeText(member.displayName, 150)}**\nAccount: \`@${safeText(member.user.username, 100)}\`\nUser ID: \`${member.id}\``;
 }
@@ -67,66 +18,18 @@ export function installEvents(ctx: Context): void {
     void Promise.resolve().then(fn).catch(err => ctx.logger.error({ event: name, error: errorText(err) }, 'GOAT event handler failed'));
   };
   client.on(Events.InteractionCreate, i => protect('interaction', () => routeInteraction(ctx, i)));
-  client.on(Events.MessageCreate, m => protect('messageCreate', () => {
-    if (m.guildId !== ctx.guild.id) return;
-    ctx.history.ingest(m, 'live');
-    if (!m.author.bot && !m.webhookId) logGif(ctx, snapshotMessage(m));
-  }));
-  client.on(Events.MessageUpdate, (oldMessage, incoming) => protect('messageUpdate', async () => {
-    if (incoming.guildId !== ctx.guild.id) return;
-    // Preserve the old snapshot before an optional REST request; the message may be deleted meanwhile.
-    const before = ctx.db.snapshot(incoming.id) ?? (!oldMessage.partial ? snapshotMessage(oldMessage as Message) : undefined);
-    let after = updatedSnapshot(incoming, before);
-    if (!after) {
-      const message = await completeMessage(incoming);
-      if (message) after = snapshotMessage(message);
-    }
-    if (!after) {
-      if (incoming.editedTimestamp && !isLogChannel(ctx, incoming.channelId)) {
-        ctx.logs.enqueue({ channelId: messageLogChannel(ctx), embeds: [goatEmbed('Message Edited', colors.orange)
-          .setDescription('The edit was observed, but the complete message could not be retrieved.')
-          .addFields({ name: 'Channel', value: `<#${incoming.channelId}>` }, { name: 'Message', value: `\`${incoming.id}\`` },
-            { name: 'Before', value: clip(before?.content || '[Not observed before edit]', 1000) },
-            { name: 'After', value: clip(incoming.content || '[Content unavailable]', 1000) }).toJSON()] }, `edit:${incoming.id}:${incoming.editedTimestamp}:unavailable`);
-      }
-      return;
-    }
-    if (after.bot) return;
-    ctx.db.recordMessage(after, 'live');
-    if (after.channelId === ctx.config.channels.usernames) ctx.usernames.prepare(after, false);
-    logGif(ctx, after);
-    if (isLogChannel(ctx, after.channelId) || (before && sameEditableContent(before, after))) return;
-    const embed = goatEmbed('Message Edited', colors.orange).setThumbnail(after.avatarUrl).addFields(...userFields(after),
-      { name: 'Before', value: clip(before?.content || (before ? '[No text]' : '[Not observed before edit]'), 1000) },
-      { name: 'After', value: clip(after.content || '[No text]', 1000) });
-    const hash = createHash('sha256').update(JSON.stringify([after.content, after.attachments, after.editedAt])).digest('hex').slice(0, 16);
-    if (JSON.stringify(before?.attachments) !== JSON.stringify(after.attachments) && (before?.attachments.length || after.attachments.length)) {
-      embed.addFields({ name: 'Attachments', value: clip(after.attachments.map(file => `[${safeText(file.name, 80)}](${file.url})`).join('\n') || 'Removed', 900) });
-    }
-    ctx.logs.enqueue({ channelId: messageLogChannel(ctx),
-      embeds: [embed.toJSON()], files: (before?.content.length ?? 0) > 1000 || after.content.length > 1000 || before?.embeds.length || after.embeds.length || before?.stickers.length || after.stickers.length ?
-        [textEvidence(`goat-edit-${after.id}.txt`, `${before ? evidence(before) : 'BEFORE: Not observed'}\n\nAFTER:\n${evidence(after)}`)] : undefined,
-      components: logButtons(after.guildId, after.channelId, after.authorId, after.id).map(r => r.toJSON()) }, `edit:${after.id}:${hash}`);
-  }));
-  client.on(Events.MessageDelete, m => protect('messageDelete', () => logDeleted(ctx, m)));
-  client.on(Events.MessageBulkDelete, (messages, channel) => protect('messageDeleteBulk', () => {
-    if (channel.guild.id !== ctx.guild.id || isLogChannel(ctx, channel.id)) return;
-    const records: string[] = [];
-    let human = 0;
-    for (const m of messages.values()) {
-      const s = ctx.db.snapshot(m.id) ?? (!m.partial ? snapshotMessage(m as Message) : undefined);
-      if (s && !s.bot) { ctx.db.recordMessage(s, 'live'); human++; }
-      ctx.db.markDeleted(m.id);
-      if (!s?.bot) records.push(s ? evidence(s) : `Message ${m.id}: content unavailable — not observed`);
-    }
-    if (!records.length) return;
-    const firstId = [...messages.keys()].sort()[0];
-    ctx.logs.enqueue({ channelId: messageLogChannel(ctx),
-      embeds: [goatEmbed('Messages Bulk Deleted', colors.red)
-      .setDescription(`${messages.size} messages removed from <#${channel.id}>.\n${human} human message snapshots are available in the evidence file.`)
-      .addFields({ name: 'Attribution', value: 'Discord does not provide a per-message actor for a bulk deletion. Check the server audit log.' }).toJSON()],
-      files: [textEvidence(`goat-bulk-${firstId}.txt`, records.join('\n\n--------------------\n\n'))],
-      components: logButtons(ctx.guild.id, channel.id).map(r => r.toJSON()) }, `bulk:${channel.id}:${firstId}`);
+  const messages = new MessageEvents(ctx);
+  // Raw is emitted before Discord.js mutates its cache. Capture that state in the same call stack.
+  client.on(Events.Raw, packet => {
+    if (ctx.stopping) return;
+    try { messages.raw(packet); }
+    catch (err) { ctx.logger.error({ event: 'rawMessages', error: errorText(err) }, 'GOAT raw message handler failed'); }
+  });
+  client.on(Events.MessageCreate, message => protect('messageCreate', () => messages.created(message)));
+  client.on(Events.MessageUpdate, (before, after) => protect('messageUpdate', () => messages.updated(before, after)));
+  client.on(Events.MessageDelete, message => protect('messageDelete', () => messages.deletedMessage(message)));
+  client.on(Events.MessageBulkDelete, (deleted, channel) => protect('messageDeleteBulk', () => {
+    if (channel.guild.id === ctx.guild.id) messages.bulkMessages(channel.id, deleted.values());
   }));
   client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => protect('audit', () => { if (guild.id === ctx.guild.id) ctx.audit.ingest(entry); }));
   client.on(Events.GuildMemberAdd, member => protect('memberAdd', async () => {

@@ -12,7 +12,10 @@ if (process.env.RAILWAY_ENVIRONMENT_ID) console.log('Railway: database path is i
 console.log(`Guild: ${env.guildId ? 'Configured' : 'Auto-detection enabled'}`);
 console.log(`Config: valid • timezone: ${config.timezone}`);
 console.log('Ticket voting: manual Start Vote • 180s • first to 3 • majority at deadline, no quorum');
-console.log('Logs: message / ticket / member / administration destinations configured separately');
+console.log('Logs: raw Gateway capture + durable snapshots; /message-logs status, test, retry');
+console.log(`Message log destination: ${config.channels.messageLogs}`);
+console.log(`Link filter: ${config.linkFilter.enabled ? 'enabled' : 'disabled'}; domains: ${config.linkFilter.allowedDomains.join(', ')}`);
+console.log('GIF exceptions: configured staff/owner + persisted /link-filter role overrides');
 console.log(`Banner: ${existsSync('assets/goat-banner.png') ? 'OK' : 'MISSING'}`);
 console.log(`Application example: ${existsSync('assets/application-mastery-example.png') ? 'OK' : 'MISSING'}`);
 console.log(`Font: ${existsSync('assets/fonts/DejaVuSans-Bold.ttf') ? 'OK' : 'MISSING'}`);

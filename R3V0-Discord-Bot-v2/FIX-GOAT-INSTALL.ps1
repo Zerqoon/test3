@@ -31,14 +31,14 @@ $goatCompleted = $false
 try {
     Write-Host ('Using ZIP: ' + $ZipPath) -ForegroundColor Cyan
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $goatExtractPath -Force
-    foreach ($goatRequired in @('package.json', 'INSTALL-AND-UPLOAD-GOAT.ps1', 'UPLOAD-GITHUB.ps1', 'src/services/ticket-votes.ts')) {
+    foreach ($goatRequired in @('package.json', 'INSTALL-AND-UPLOAD-GOAT.ps1', 'UPLOAD-GITHUB.ps1', 'src/services/ticket-votes.ts', 'src/services/message-events.ts', 'src/services/link-filter.ts')) {
         if (-not (Test-Path -LiteralPath (Join-Path $goatSourceRoot $goatRequired) -PathType Leaf)) {
-            throw 'This is an older or incomplete ZIP. Download the complete GOAT 2.2 project again.'
+            throw 'This is an older or incomplete ZIP. Download the complete GOAT 2.3 project again.'
         }
     }
     $goatManifest = Get-Content -LiteralPath (Join-Path $goatSourceRoot 'package.json') -Raw | ConvertFrom-Json
     $goatVersion = [version]([string]$goatManifest.version)
-    if ($goatVersion -lt [version]'2.2.0' -or $goatVersion.Major -ne 2) {
+    if ($goatVersion -lt [version]'2.3.0' -or $goatVersion.Major -ne 2) {
         throw ('Unsupported project version: ' + $goatManifest.version + '. Download the latest GOAT project ZIP.')
     }
     Write-Host ('Bundled project version: ' + $goatManifest.version) -ForegroundColor Green

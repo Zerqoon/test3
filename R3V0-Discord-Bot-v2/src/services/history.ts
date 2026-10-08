@@ -1,6 +1,6 @@
 import { ChannelType, type GuildTextBasedChannel, type Message } from 'discord.js';
 import type { Context } from '../core/types.js';
-import { snapshotMessage } from '../core/messages.js';
+import { botMarker, snapshotMessage } from '../core/messages.js';
 import { colors, goatEmbed } from '../core/embeds.js';
 import { errorText, sleep } from '../core/util.js';
 
@@ -16,8 +16,11 @@ export class HistoryService {
   constructor(private readonly ctx: Context) {}
   ingest(message: Message, origin: 'live' | 'history'): boolean {
     if (!message.guildId || message.guildId !== this.ctx.guild.id) return false;
-    if (this.ctx.config.history.excludedChannelIds.includes(message.channelId)) return false;
-    if (message.author.bot || message.webhookId) { this.ctx.usernames.reconcile(message); return false; }
+    if (message.author.bot || message.webhookId) {
+      this.ctx.db.recordMessage(botMarker(snapshotMessage(message)), origin);
+      this.ctx.usernames.reconcile(message); return false;
+    }
+    if (origin === 'history' && this.ctx.config.history.excludedChannelIds.includes(message.channelId)) return false;
     const s = snapshotMessage(message);
     const added = this.ctx.db.recordMessage(s, origin);
     if (message.channelId === this.ctx.config.channels.usernames &&

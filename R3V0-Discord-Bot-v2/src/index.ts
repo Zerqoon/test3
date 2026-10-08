@@ -20,6 +20,7 @@ import { maintain } from './services/maintenance.js';
 import { MemberService } from './services/members.js';
 import { TicketService } from './services/tickets.js';
 import { EmbedService } from './services/custom-embeds.js';
+import { LinkFilterService } from './services/link-filter.js';
 
 requireToken();
 assertPersistentDatabase();
@@ -43,7 +44,7 @@ async function shutdown(code = 0): Promise<void> {
   if (ctx) {
     ctx.stopping = true;
     ctx.logs.stop(); ctx.history.stop(); ctx.usernames.stop(); ctx.giveaways.stop(); ctx.moderation.stop();
-    ctx.members.stop(); ctx.tickets.stop(); ctx.embeds.stop();
+    ctx.members.stop(); ctx.tickets.stop(); ctx.embeds.stop(); ctx.linkFilter.stop();
   }
   if (maintenanceTimer) clearInterval(maintenanceTimer);
   lease.release();
@@ -72,9 +73,11 @@ client.once(Events.ClientReady, ready => {
     ctx.nicknames = new NicknameService(ctx); ctx.giveaways = new GiveawayService(ctx);
     ctx.moderation = new ModerationService(ctx); ctx.audit = new AuditService(ctx);
     ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx); ctx.embeds = new EmbedService(ctx);
+    ctx.linkFilter = new LinkFilterService(ctx);
     installEvents(ctx);
     // Interactive handlers and delivery workers become available before a full member preload.
     ctx.logs.start(); ctx.usernames.start(); ctx.giveaways.start(); ctx.moderation.start(); ctx.embeds.start();
+    ctx.linkFilter.start();
     ctx.members.initialize(guild.members.cache.values()); ctx.members.start(); ctx.tickets.start();
     const activeContext = ctx;
     void Promise.all([config.channels.logs, config.channels.messageLogs, config.channels.memberLogs, config.channels.welcome,

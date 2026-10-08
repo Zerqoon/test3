@@ -40,21 +40,24 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 if (-not (Get-Command robocopy -ErrorAction SilentlyContinue)) { throw 'This script requires Windows robocopy.' }
 if ($ProjectFolder -notmatch '^[A-Za-z0-9_-]+$') { throw 'ProjectFolder must be a single directory name.' }
-foreach ($required in @('package.json', 'package-lock.json', 'Dockerfile', 'config.json', '.env.example', 'src', 'assets', 'docs/github-subfolder-ci.yml', 'src/services/tickets.ts', 'src/services/ticket-votes.ts', 'src/services/custom-embeds.ts', 'src/services/members.ts', 'assets/application-mastery-example.png')) {
+foreach ($required in @('package.json', 'package-lock.json', 'Dockerfile', 'config.json', '.env.example', 'src', 'assets', 'docs/github-subfolder-ci.yml', 'src/services/tickets.ts', 'src/services/ticket-votes.ts', 'src/services/message-events.ts', 'src/services/link-filter.ts', 'src/services/custom-embeds.ts', 'src/services/members.ts', 'assets/application-mastery-example.png')) {
     if (-not (Test-Path -LiteralPath (Join-Path $SourceDirectory $required))) { throw "Missing project file: $required. Extract the complete ZIP first." }
 }
 $manifest = Get-Content -LiteralPath (Join-Path $SourceDirectory 'package.json') -Raw | ConvertFrom-Json
 if (-not $manifest.PSObject.Properties['version']) { throw 'Missing project version in package.json.' }
 $goatVersion = [version]([string]$manifest.version)
-if ($goatVersion -lt [version]'2.2.0' -or $goatVersion.Major -ne 2) {
+if ($goatVersion -lt [version]'2.3.0' -or $goatVersion.Major -ne 2) {
     throw 'This directory does not contain the latest GOAT project. Copy ALL contents of GOAT-Clan-Bot from the new ZIP, not just this script.'
 }
 $settings = Get-Content -LiteralPath (Join-Path $SourceDirectory 'config.json') -Raw | ConvertFrom-Json
 if (-not $settings.PSObject.Properties['tickets'] -or -not $settings.tickets.PSObject.Properties['enabled'] -or $settings.tickets.enabled -ne $true) {
-    throw 'Tickets are not enabled in this config.json. Use config.json from the complete GOAT 2.2 ZIP.'
+    throw 'Tickets are not enabled in this config.json. Use config.json from the complete GOAT 2.3 ZIP.'
+}
+if (-not $settings.PSObject.Properties['linkFilter'] -or $settings.linkFilter.enabled -ne $true) {
+    throw 'The new link filter is not enabled. Use config.json from the complete GOAT 2.3 ZIP.'
 }
 Write-Host ('Source directory: ' + $SourceDirectory) -ForegroundColor Cyan
-Write-Host ('GOAT version: ' + $manifest.version + ' | Tickets: enabled') -ForegroundColor Cyan
+Write-Host ('GOAT version: ' + $manifest.version + ' | Tickets and link filter: enabled') -ForegroundColor Cyan
 
 $checkout = Join-Path ([System.IO.Path]::GetTempPath()) ('goat-upload-' + [Guid]::NewGuid().ToString('N'))
 $completed = $false
@@ -65,7 +68,7 @@ try {
     if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
 
-    Write-Host 'Copying GOAT 2.2 source without tokens or local databases...' -ForegroundColor Cyan
+    Write-Host 'Copying GOAT 2.3 source without tokens or local databases...' -ForegroundColor Cyan
     & robocopy $SourceDirectory $destination /E /R:2 /W:1 /XJ /NFL /NDL /NJH /NJS `
         /XD .git node_modules dist data backups logs __pycache__ `
         /XF .env '.env.*' '*.sqlite*' '*.db*' '*.log' '*.pyc'
@@ -94,7 +97,7 @@ try {
     if ($difference -eq 0) {
         Write-Host 'GitHub already contains this project.' -ForegroundColor Green
     } else {
-        Invoke-GoatGit -GitArguments @('-C', $checkout, 'commit', '-m', 'Update GOAT 2.2: manual Start Vote, first to 3, fast message logs and public activity and custom embeds')
+        Invoke-GoatGit -GitArguments @('-C', $checkout, 'commit', '-m', 'Update GOAT 2.3: manual Start Vote, first to 3, fast message logs and public activity and custom embeds')
         Invoke-GoatGit -GitArguments @('-C', $checkout, 'push', 'origin', ('HEAD:' + $Branch))
         Write-Host ('GOAT ' + $manifest.version + ' uploaded. Railway can now deploy this commit.') -ForegroundColor Green
     }

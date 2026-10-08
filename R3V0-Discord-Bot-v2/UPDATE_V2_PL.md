@@ -1,6 +1,6 @@
-# GOAT 2.4 — aktualizacja GitHub + Railway
+# GOAT 2.5 — aktualizacja GitHub + Railway
 
-Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **FIX-GOAT-INSTALL.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.4.0**.
+Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **FIX-GOAT-INSTALL.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.5.0**.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\zerqo\Downloads\FIX-GOAT-INSTALL.ps1"
@@ -10,7 +10,7 @@ Skrypt wybierze najnowszy ZIP, sprawdzi wersję i obecność systemu głosowania
 
 Jeżeli pliki są w innym folderze, podaj pełną ścieżkę skryptu oraz `-ZipPath "pełna ścieżka do ZIP-a"`. Alternatywnie rozpakuj projekt i uruchom dołączony `UPLOAD-GITHUB.ps1` z parametrem `-SourceDirectory` wskazującym folder zawierający `package.json`.
 
-W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.4.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
+W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.5.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
 
 Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployment-actions), [GitHub Autodeploys](https://docs.railway.com/deployments/github-autodeploys), [Keyboard Shortcuts](https://docs.railway.com/overview/keyboard-shortcuts).
 
@@ -25,11 +25,39 @@ Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployme
 | Replicas | `1` |
 | Serverless | Wyłączone |
 
-Baza aktualizuje się automatycznie do schematu 7. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
+Baza aktualizuje się automatycznie do schematu 8. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
+
+## Nowości 2.5: nabór 20 osób i blacklist
+
+| Komenda | Działanie |
+| --- | --- |
+| `/clan-off` | Wyłącza nowe aplikacje. Przycisk **Clan Application · 20/20** jest szary i nieklikalny. |
+| `/open-ticket count:5` | Otwiera nabór na **5 wolnych miejsc**; przycisk pokazuje **15/20**. |
+| `/open-ticket count:20` | Otwiera wszystkie 20 miejsc, jeżeli nie ma aktywnych rezerwacji. |
+| `/clan-status` | Prywatnie pokazuje miejsca zajęte, wolne, zarezerwowane i stan panelu. |
+
+Komendy są widoczne w menu Discorda; ich wykonanie nadal sprawdza dotychczasową administrację oraz Twój zapisany ID. Publiczny panel nie opisuje uprawnień ani osób z dostępem.
+
+Limit jest stały: **20**. `count` oznacza **wolne miejsca**, po uwzględnieniu otwartych aplikacji. Przykład: masz 2 aktywne aplikacje i ustawiasz `count:5` → 13 miejsc zajętych, 2 zarezerwowane, 5 wolnych. Nie możesz ustawić 20 wolnych miejsc przy aktywnej rezerwacji. Polecenie służy również do aktualizacji wolnych miejsc, gdy ktoś opuszcza klan.
+
+Nowy ticket Clan rezerwuje jedno miejsce. Akceptacja przez głosowanie lub komendę zamienia rezerwację w miejsce zajęte. Odrzucenie, wycofanie lub usunięcie kanału bez decyzji zwalnia rezerwację. Support nie zużywa miejsc. `/clan-off` zachowuje aktualny licznik i istniejące rozmowy; zatrzymuje nowe aplikacje i ponowne otwieranie nierozpatrzonych aplikacji. Po zajęciu lub zarezerwowaniu ostatniego miejsca przycisk sam przełącza się na szary **20/20**. Po zwolnieniu rezerwacji wraca do aktywnego stanu, chyba że nabór został ręcznie wyłączony.
+
+Dodany przycisk **Recruitment Status** daje prywatną odpowiedź z dostępnością. Licznik aktualizuje ten sam panel bez tworzenia kolejnych wiadomości. Ustawienia, rezerwacje i decyzje przetrwają restart. Formularz otwarty przed zamknięciem naboru lub przed zajęciem ostatniego miejsca jest ponownie sprawdzany przy wysłaniu. Równoczesne zgłoszenia nie przekroczą limitu.
+
+Przy aktualizacji istniejące nierozpatrzone, aktywne aplikacje dostają rezerwacje. Bot nie zgaduje liczby obecnych członków klanu: **ustaw rzeczywistą liczbę wolnych miejsc przez `/open-ticket count:...` albo użyj `/clan-off`**. Jeśli stara wersja utworzyła ponad 20 aplikacji, rozmowy pozostają; nowe zgłoszenia są zablokowane, a akceptacja nie przekroczy 20 zajętych miejsc.
+
+Rola **1557809384166391918** jest w `tickets.clanBlacklistRoleIds` i `linkFilter.gifBlockedRoleIds`:
+
+- Blokuje **tworzenie Clan Application** i ponowne otwieranie nierozpatrzonej aplikacji. Support pozostaje dostępny; istniejące tickety nie są masowo zamykane.
+- Blokuje **wszystkie GIF-y**, w tym Tenor, Giphy, KLIPY, GIFV i załączniki GIF. Blokada ma pierwszeństwo przed rolami GIF, administracją i kanałem `1557577086351179866`.
+- GIF zostaje usunięty, a krótka informacja po angielsku znika po 10 sekundach. Nie ujawnia ID roli ani zasad dostępu.
+- Zwykły tekst, screeny i dozwolone linki YouTube/TikTok/Roblox nadal działają. Dotychczasowe zasady zaproszeń i innych domen pozostają.
+
+Jedna zmiana ustawienia naboru trafia do Ticket Logs. Rezerwacje aktualizują licznik i korzystają z dotychczasowych logów ticketów, bez dodatkowego strumienia logów.
 
 ## Nowe logi i filtr linków
 
-Po uruchomieniu sprawdź **2.4.0** w `/goat-status`, następnie użyj **`/message-logs test`**. Ta komenda wysyła jeden test bezpośrednio do **1557439487813091358**. **`/message-logs status`** prywatnie pokaże kanał, uprawnienia, czas ostatniej zaobserwowanej edycji/usunięcia i błąd dostarczenia. Po poprawieniu dostępu **`/message-logs retry`** ponowi zapisane logi.
+Po uruchomieniu sprawdź **2.5.0** w `/goat-status`, następnie użyj **`/message-logs test`**. Ta komenda wysyła jeden test bezpośrednio do **1557439487813091358**. **`/message-logs status`** prywatnie pokaże kanał, uprawnienia, czas ostatniej zaobserwowanej edycji/usunięcia i błąd dostarczenia. Po poprawieniu dostępu **`/message-logs retry`** ponowi zapisane logi.
 
 Logi korzystają z surowych zdarzeń Gateway i bazy, także gdy Discord.js nie ma już wiadomości albo kanału w pamięci. Edycje częściowe zachowują niezmienione załączniki i podglądy. Wiadomości ludzi na kanałach logów również są logowane. Wiadomości botów są oznaczane osobno, aby nie tworzyć pętli. Błędny pojedynczy wpis jest zachowywany do naprawy i nie zatrzymuje pozostałych.
 
@@ -40,8 +68,8 @@ Bot potrzebuje dostępu do kanałów źródłowych, **Manage Messages** do usuwa
 | Zaproszenie `discord.gg` / `discord.com/invite` / `discordapp.com/invite` | Usuwane; wyjątek ma dotychczasowa administracja i Twój zapisany ID |
 | TikTok / YouTube / Roblox, również prawdziwe subdomeny i `youtu.be` | Dozwolone |
 | Inna domena | Usuwana, chyba że dopiszesz domenę w `linkFilter.allowedDomains` |
-| Tenor / Giphy / KLIPY — także Klipy clips i static.klipy.com | Dozwolone dla każdego |
-| Inne GIF-y, bezpośrednie pliki GIF i GIF-y z Discorda | Dozwolone na `1557577086351179866`, dla administracji lub dodanej roli GIF |
+| Tenor / Giphy / KLIPY — także Klipy clips i static.klipy.com | Dozwolone bez roli blokującej GIF-y |
+| Inne GIF-y, bezpośrednie pliki GIF i GIF-y z Discorda | Dozwolone na `1557577086351179866`, dla administracji lub dodanej roli GIF, jeżeli osoba nie ma roli blokującej |
 | Zwykłe screeny PNG/JPG jako załączniki | Dozwolone |
 
 **Dodawanie rang:** `/link-filter allow-role role:...` — natywny wybór roli. **Usuwanie wyjątku:** `/link-filter remove-role role:...`. **Prywatny podgląd:** `/link-filter status`. Dodatkowe role początkowo są puste; administracja ma wyjątek od razu. Zmiany ról zapisują się w SQLite i pozostają po redeployu. Rola GIF pozwala wysyłać GIF-y także z Discorda i z innych domen, ale nie daje wyjątku dla zaproszeń ani zwykłych linków spoza listy.

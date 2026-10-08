@@ -1,4 +1,4 @@
-# GOAT 2.4 — GitHub + Railway
+# GOAT 2.5 — GitHub + Railway
 
 Dla istniejącego repozytorium **Zerqoon/test3** użyj **UPDATE_V2_PL.md** i aktualizatora **FIX-GOAT-INSTALL.ps1**. Projekt pozostaje w **R3V0-Discord-Bot-v2**, a Railway Root Directory to **`/R3V0-Discord-Bot-v2`**. Poniższe kroki utworzenia nowego repozytorium dotyczą tylko osobnego nowego repo.
 
@@ -65,7 +65,7 @@ Railway montuje wolumen z uprawnieniami root, dlatego `RAILWAY_RUN_UID=0` pozwal
 | Restart Policy | `Always`, jeśli dostępne w Twoim planie; w przeciwnym razie `On Failure` |
 | HTTP Healthcheck Path | Pozostaw puste |
 
-Kliknij **Deploy**. W Build Logs powinien być użyty wykryty Dockerfile. W logach uruchomienia czekaj na **GOAT ready**; pole `version` powinno mieć `2.4.0`. Na Discordzie pojawią się komendy `/giveway-create`, `/messages` i pozostałe.
+Kliknij **Deploy**. W Build Logs powinien być użyty wykryty Dockerfile. W logach uruchomienia czekaj na **GOAT ready**; pole `version` powinno mieć `2.5.0`. Na Discordzie pojawią się komendy `/giveway-create`, `/messages` i pozostałe.
 
 Bot jest procesem łączącym się z Discordem przez gateway. Domena publiczna i port HTTP nie są potrzebne do działania. Nie uruchamiaj równocześnie kopii na komputerze z tym samym tokenem.
 

@@ -29,6 +29,7 @@ export const configSchema = z.object({
       'giphy.com', 'gph.is', 'tenor.com', 'klipy.com', 'tiktok.com', 'youtube.com', 'youtu.be', 'roblox.com'
     ]),
     gifAllowedRoleIds: z.array(snowflake).default([]),
+    gifBlockedRoleIds: z.array(snowflake).default(['1557809384166391918']),
     allowApprovedGifs: z.boolean().default(true),
     gifProviderDomains: z.array(z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/)).min(1).default(defaultGifDomains),
     unrestrictedGifChannelIds: z.array(snowflake).default(['1557577086351179866']),
@@ -48,6 +49,7 @@ export const configSchema = z.object({
     cooldownSeconds: z.number().int().min(0).max(86400).default(300),
     maxTicketsPerHour: z.number().int().min(1).max(20).default(3),
     maxOpenTickets: z.number().int().min(1).max(200).default(50),
+    clanBlacklistRoleIds: z.array(snowflake).default(['1557809384166391918']),
     voting: z.object({ enabled: z.boolean().default(true), channelId: snowflake.default('1557433699572777000'),
       durationSeconds: z.number().int().min(60).max(604800).default(180),
       minimumVotes: z.number().int().min(1).max(1000).default(3), voterRoleIds: z.array(snowflake).default([]) }).default({})

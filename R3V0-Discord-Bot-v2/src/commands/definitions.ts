@@ -71,6 +71,10 @@ export const commandDefinitions = [
       .addStringOption(o => o.setName('reason').setDescription('Reason included in the applicant DM').setRequired(true).setMaxLength(1000)))
     .addSubcommand(s => s.setName('repair').setDescription('Restore ticket privacy permissions')),
   new SlashCommandBuilder().setName('ticket-panel').setDescription('Publish or repair the GOAT ticket panel'),
+  new SlashCommandBuilder().setName('clan-off').setDescription('Pause new clan applications and disable the 20/20 button'),
+  new SlashCommandBuilder().setName('open-ticket').setDescription('Reopen clan recruitment with a chosen number of free places')
+    .addIntegerOption(o => o.setName('count').setDescription('Free places out of 20; existing applications already reserve places').setRequired(true).setMinValue(1).setMaxValue(20)),
+  new SlashCommandBuilder().setName('clan-status').setDescription('View free clan places, occupied places and reserved applications'),
   new SlashCommandBuilder().setName('ticket-list').setDescription('Show recent GOAT tickets'),
   new SlashCommandBuilder().setName('ticket-add').setDescription('Add a member to the current GOAT ticket')
     .addUserOption(option => option.setName('user').setDescription('Member to add').setRequired(true)),

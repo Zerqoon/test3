@@ -200,7 +200,20 @@ export class Store {
       CREATE INDEX IF NOT EXISTS filter_notice_pending ON filter_notices(state,retry_at);
       CREATE INDEX IF NOT EXISTS filter_notice_user ON filter_notices(guild_id,channel_id,user_id,created_at);
     `);
-    this.setMeta('schema_version', '7');
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS clan_intake (
+        guild_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1,
+        occupied INTEGER NOT NULL DEFAULT 0 CHECK(occupied BETWEEN 0 AND 20),
+        revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, updated_by TEXT
+      );
+      CREATE TABLE IF NOT EXISTS clan_application_seats (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets(id), guild_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('reserved','accepted','released')),
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS clan_seats_guild_state ON clan_application_seats(guild_id,state);
+    `);
+    this.setMeta('schema_version', '8');
   }
   private statement(sql: string): StatementSync {
     let s = this.statements.get(sql);

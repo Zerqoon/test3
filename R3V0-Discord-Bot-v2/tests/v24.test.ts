@@ -73,9 +73,9 @@ test('the unrestricted GIF channel accepts unknown GIFV and uploads but still bl
   const f = fixture({ filter: true }); const channelId = '1557577086351179866';
   const message = present(f, 'https://example.net/animated', channelId);
   message.embeds.push({ toJSON: () => ({ type: EmbedType.GIFV, url: message.content, video: { url: 'https://example.net/a.mp4' } }) } as never);
-  assert.equal(f.ctx.linkFilter.prepare(snapshotMessage(message)), false);
+  assert.equal(f.ctx.linkFilter.prepare(snapshotMessage(message)), true); await settle();
   const gif = present(f, 'https://cdn.discordapp.com/attachments/1/2/goat.gif', channelId, 2001);
-  assert.equal(f.ctx.linkFilter.prepare(snapshotMessage(gif)), false);
+  assert.equal(f.ctx.linkFilter.prepare(snapshotMessage(gif)), true); await settle();
   for (const [index, content] of [[2002, 'discord.gg/other'], [2003, 'https://evil.example/login']] as const) {
     const blocked = present(f, content, channelId, index); assert.equal(f.ctx.linkFilter.prepare(snapshotMessage(blocked)), true); await settle();
     assert.ok(f.deletes.includes(blocked.id));
@@ -239,7 +239,7 @@ test('schema 7 migration preserves activity, role overrides and legacy deletion 
   db.run('INSERT INTO link_filter_roles VALUES(?,?,?,?,?)', GUILD, roleId, 1, STAFF, Date.now());
   db.run('INSERT INTO link_filter_jobs(message_id,guild_id,channel_id,snapshot,reason,created_at) VALUES(?,?,?,?,?,?)', s.id, GUILD, s.channelId, JSON.stringify(s), 'Saved', Date.now());
   db.run('ALTER TABLE link_filter_jobs DROP COLUMN kind'); db.setMeta('schema_version', '6'); db.close();
-  db = new Store(path); assert.equal(db.meta('schema_version'), '7'); assert.equal(db.count(GUILD, ALICE), 1);
+  db = new Store(path); assert.equal(db.meta('schema_version'), '8'); assert.equal(db.count(GUILD, ALICE), 1);
   assert.ok(db.get('SELECT 1 FROM link_filter_roles')); assert.equal(db.get<{ kind: string }>('SELECT kind FROM link_filter_jobs')!.kind, 'link');
   db.close(); f.ctx.db.close(); rmSync(directory, { recursive: true, force: true });
 });

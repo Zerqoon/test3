@@ -91,6 +91,24 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
     case 'nickname-sync': await ctx.nicknames.syncAll(); await reply('Nickname Sync', 'Accessible clan members have been checked. Members above the bot and the server owner cannot be renamed by Discord.'); return;
     case 'autorole-sync': await reply('Autorole Sync', `${await ctx.members.syncRoles()} members queued. Roles will be assigned while GOAT runs.`); return;
     case 'ticket-panel': await ctx.tickets.ensurePanel(true); await reply('Tickets', 'The ticket panel is ready.'); return;
+    case 'clan-off': case 'open-ticket': {
+      const updated = await ctx.tickets.setIntake(name === 'clan-off' ? null : i.options.getInteger('count', true), i.user.id);
+      const status = ctx.tickets.intake.status();
+      await reply(name === 'clan-off' ? 'Clan Recruitment Closed' : 'Clan Recruitment Opened',
+        (name === 'clan-off' ? 'New clan applications are paused. The Clan Application button displays **20/20** and is disabled.' : `**${status.available} free places**. The Clan Application button displays **${status.displayUsed}/20**.`) +
+        '\nExisting tickets and Support remain available.' + (updated ? '' : '\nThe setting is saved. The panel could not be updated yet; automatic retry is queued.'));
+      return;
+    }
+    case 'clan-status': {
+      const status = ctx.tickets.intake.status();
+      await i.editReply({ embeds: [goatEmbed('Clan Recruitment', status.accepting ? colors.green : colors.orange).addFields(
+        { name: 'Recruitment', value: status.accepting ? 'Open' : status.enabled ? 'Full' : 'Paused', inline: true },
+        { name: 'Free Places', value: String(status.available), inline: true }, { name: 'Occupied Places', value: `${status.occupied}/20`, inline: true },
+        { name: 'Reserved Applications', value: String(status.reserved), inline: true },
+        { name: 'Panel', value: ctx.db.meta('ticket_panel_intake_revision') === String(status.revision) ? 'Up to date' : 'Update queued', inline: true },
+        { name: 'Last Recruitment Setting', value: `${stamp(status.updatedAt)}${status.updatedBy ? ` · <@${status.updatedBy}>` : ''}` })
+        .setDescription('Use /open-ticket count to set the number of free places. Active applications already reserve places; rejecting or withdrawing an application releases its reservation.')], allowedMentions: noMentions }); return;
+    }
     case 'ticket-start-vote': {
       const ticket = ctx.tickets.fromChannel(i.channelId);
       if (!ticket) throw new UserError('Use this command inside a clan application ticket.');
@@ -131,10 +149,12 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
       const roles = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM autorole_jobs WHERE guild_id=? AND status='pending'", ctx.guild.id)!.n;
       const embeds = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM custom_embeds WHERE guild_id=? AND state='publishing'", ctx.guild.id)!.n;
       const dm = ctx.roleReminders.counts();
+      const intake = ctx.tickets.intake.status();
       await i.editReply({ embeds: [goatEmbed('System Status', colors.green).addFields({ name: 'Version', value: VERSION, inline: true }, { name: 'Uptime', value: humanDuration(Date.now() - ctx.startedAt), inline: true },
         { name: 'Gateway', value: `${ctx.client.ws.ping} ms`, inline: true }, { name: 'Queued Logs', value: String(ctx.logs.pending()), inline: true },
         { name: 'Username Jobs', value: String(pending), inline: true }, { name: 'Live Giveaways', value: String(live), inline: true },
         { name: 'Active Tickets', value: String(tickets), inline: true }, { name: 'Autorole Queue', value: String(roles), inline: true },
+        { name: 'Clan Recruitment', value: `${intake.accepting ? 'Open' : intake.enabled ? 'Full' : 'Paused'} · ${intake.available} free · ${intake.reserved} applications`, inline: true },
         { name: 'Embed Queue', value: String(embeds), inline: true },
         { name: 'Link Filter Queue', value: String(ctx.linkFilter.pending()), inline: true },
         { name: 'Role Username DMs', value: `${dm.pending} queued · ${dm.sent} sent · ${dm.closed} DMs disabled` },
@@ -169,6 +189,7 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
           { name: 'Approved GIF Providers', value: `${ctx.config.linkFilter.allowApprovedGifs ? 'Available to everyone' : 'Requires a GIF role exception'}\n${clip(ctx.config.linkFilter.gifProviderDomains.join(', '), 900)}` },
           { name: 'Channels With Unrestricted GIFs', value: clip(ctx.config.linkFilter.unrestrictedGifChannelIds.map(id => `<#${id}>`).join(' '), 1000) || 'None' },
           { name: 'GIF Exceptions', value: clip(roles.map(role => `<@&${role}>`).join(' '), 1000) || 'No additional roles configured.' },
+          { name: 'GIF Restrictions', value: (clip(ctx.config.linkFilter.gifBlockedRoleIds.map(role => `<@&${role}>`).join(' '), 900) || 'None') + '\nRestrictions override channels, providers and GIF exceptions, including staff.' },
           { name: 'Removal Queue', value: String(ctx.linkFilter.pending()), inline: true },
           { name: 'Feedback', value: ctx.config.linkFilter.notifications.enabled ? `Warnings disappear after ${ctx.config.linkFilter.notifications.deleteAfterSeconds}s.` : 'Disabled' })], allowedMentions: noMentions });
       }

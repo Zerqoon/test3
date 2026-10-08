@@ -29,7 +29,7 @@ export function votePanel(ticket: TicketRow, review: TicketReview) {
     .setDescription(`## @${ticket.roblox_username ?? 'Not supplied'}\n<@${ticket.owner_id}> · **${status}**`)
     .addFields({ name: 'Yes', value: `**${review.yes_count} / 3**`, inline: true }, { name: 'No', value: `**${review.no_count} / 3**`, inline: true });
   if (voting) embed.addFields({ name: 'Closes', value: `${stamp(review.ends_at, 'R')}\nFirst to **3 Yes** or **3 No** decides immediately. Otherwise the majority wins when time ends.` });
-  else if (review.state === 'review') embed.addFields({ name: 'Result', value: review.yes_count + review.no_count === 0 ? 'No votes — awaiting a decision.' : 'Tie — awaiting a decision.' });
+  else if (review.state === 'review') embed.addFields({ name: 'Result', value: review.reason ? safeText(review.reason, 900) : review.yes_count + review.no_count === 0 ? 'No votes — awaiting a decision.' : 'Tie — awaiting a decision.' });
   if (review.decision && review.reason) embed.addFields({ name: 'Reason', value: safeText(review.reason, 900) });
   embed.setFooter({ text: `Application #${String(ticket.id).padStart(4, '0')}` });
   return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -155,14 +155,21 @@ export class TicketVoteService {
         id, this.ctx.config.tickets.voting.channelId, Date.now(), VOTE_TARGET, '[]');
       const review = this.get(id)!;
       if (review.decision) throw new UserError('This application has already been decided.');
-      this.saveDecision(id, decision, actorId, reason);
+      if (decision === 'accepted' && this.ctx.tickets.intake.status().occupied >= 20) throw new UserError('The clan already has 20 occupied places. Update recruitment before accepting another application.');
+      this.ctx.db.transaction(() => this.saveDecision(id, decision, actorId, reason));
       await this.completeDecision(id);
     });
   }
   private saveDecision(id: number, decision: ApplicationDecision, actorId: string, reason: string): void {
     const counts = this.counts(id);
+    if (decision === 'accepted' && this.ctx.tickets.intake.status().occupied >= 20) {
+      this.ctx.db.run("UPDATE ticket_reviews SET state='review',reason=?,yes_count=?,no_count=?,dirty=1 WHERE ticket_id=?", 'The clan is full. This vote is waiting for a free place and a decision.', counts.yes, counts.no, id);
+      return;
+    }
+    this.ctx.tickets.intake.settle(id, decision === 'accepted');
     this.ctx.db.run(`UPDATE ticket_reviews SET state='deciding',decision=?,decided_by=?,decided_at=?,reason=?,yes_count=?,no_count=?,dirty=1,retry_at=0 WHERE ticket_id=?`,
       decision, actorId, Date.now(), clip(reason, 1000), counts.yes, counts.no, id);
+    this.ctx.tickets.intakeChanged();
   }
   cancel(id: number): void {
     this.ctx.db.run("UPDATE ticket_reviews SET state='cancelled',dirty=1,dm_status='not_required' WHERE ticket_id=? AND decision IS NULL AND state IN ('waiting','voting','counting','review')", id);
@@ -174,8 +181,8 @@ export class TicketVoteService {
     if (this.get(id)?.state !== 'counting' || this.ctx.tickets.get(id).state !== 'open') { this.cancel(id); return; }
     if (!decision) this.ctx.db.run("UPDATE ticket_reviews SET state='review',yes_count=?,no_count=?,dirty=1 WHERE ticket_id=?", counts.yes, counts.no, id);
     else {
-      this.saveDecision(id, decision, this.ctx.client.user!.id, `Community vote: ${counts.yes} Yes / ${counts.no} No.`);
-      await this.completeDecision(id);
+      this.ctx.db.transaction(() => this.saveDecision(id, decision, this.ctx.client.user!.id, `Community vote: ${counts.yes} Yes / ${counts.no} No.`));
+      if (this.get(id)?.decision) await this.completeDecision(id);
     }
   }
   private async completeDecision(id: number): Promise<void> {

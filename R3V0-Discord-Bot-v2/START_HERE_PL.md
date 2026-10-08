@@ -1,4 +1,4 @@
-# GOAT 2.4 — uruchomienie
+# GOAT 2.5 — uruchomienie
 
 Projekt jest przygotowany dla Twojego serwera. Kanały, rola klanu, dwie role administracji oraz Twój osobisty dostęp są już wpisane w `config.json`. Cały interfejs bota jest po angielsku.
 
@@ -16,6 +16,8 @@ Projekt jest przygotowany dla Twojego serwera. Kanały, rola klanu, dwie role ad
 Nie musisz wpisywać ID serwera — bot rozpozna je po kanale z nickami. `GUILD_ID` i `APPLICATION_ID` można zostawić puste. Tokenu nie wklejaj na Discord ani do publicznego repozytorium.
 
 ## Najważniejsze komendy
+
+Nowość **2.5**: `/clan-off` wyłącza nabór i daje szary, nieklikalny przycisk **20/20**. `/open-ticket count:5` otwiera **5 wolnych miejsc**, czyli **15/20**. `/clan-status` pokazuje szczegóły prywatnie. Limit 20 uwzględnia aktywne aplikacje; akceptacja zajmuje miejsce, a odrzucenie lub wycofanie je zwalnia. Support działa również po wyłączeniu naboru. Ustaw rzeczywistą liczbę wolnych miejsc po aktualizacji. Rola `1557809384166391918` blokuje aplikacje Clan i wszystkie GIF-y, także na kanale z wyjątkiem. Szczegóły są w **UPDATE_V2_PL.md**.
 
 | Komenda | Działanie |
 | --- | --- |

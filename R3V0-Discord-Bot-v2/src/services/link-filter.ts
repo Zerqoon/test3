@@ -8,7 +8,7 @@ import { textEvidence } from './logs.js';
 import { logGifEvent } from './message-events.js';
 import { approvedGifSource, approvedGifUrl, defaultGifDomains, domainIs, gifUrl } from '../core/media.js';
 
-export interface LinkViolation { kind: 'invite' | 'link' | 'gif'; reason: string; links: string[]; }
+export interface LinkViolation { kind: 'invite' | 'link' | 'gif' | 'gif-blocked'; reason: string; links: string[]; }
 interface FilterJob {
   message_id: string; channel_id: string; snapshot: string; reason: string;
   state: string; attempts: number; kind: LinkViolation['kind']; created_at: number;
@@ -39,12 +39,11 @@ function decodePath(path: string): string { try { return decodeURIComponent(path
 export function linkViolation(s: MessageSnapshot, options: {
   allowedDomains: string[]; blockInvites: boolean; staff: boolean; gifsAllowed: boolean;
   allowApprovedGifs?: boolean; gifProviderDomains?: string[];
+  gifsBlocked?: boolean;
 }): LinkViolation | undefined {
-  if (s.bot || options.staff) return;
+  if (s.bot) return;
   // Top-level embed URLs are destinations; preview thumbnails are Discord-generated resources.
   const links = messageLinks([s.content, ...s.embeds.map(embed => embed.url ?? '')].join('\n'));
-  const invites = links.filter(isDiscordInvite);
-  if (options.blockInvites && invites.length) return { kind: 'invite', reason: 'Discord invite links are restricted.', links: invites.map(url => url.href) };
   const providers = options.gifProviderDomains ?? defaultGifDomains;
   const gifLinks = links.filter(url => gifUrl(url, providers));
   const media = gifMedia(s, providers);
@@ -68,6 +67,11 @@ export function linkViolation(s: MessageSnapshot, options: {
       for (const url of messageLinks(file.url)) gifDestinations.add(url.href);
     }
   }
+  if (hasGif && options.gifsBlocked) return { kind: 'gif-blocked', reason: 'GIFs are disabled for your account.',
+    links: [...new Set([...gifLinks.map(url => url.href), ...media.links, ...gifDestinations])] };
+  if (options.staff) return;
+  const invites = links.filter(isDiscordInvite);
+  if (options.blockInvites && invites.length) return { kind: 'invite', reason: 'Discord invite links are restricted.', links: invites.map(url => url.href) };
   if (hasGif && !options.gifsAllowed && (!(options.allowApprovedGifs ?? true) || unapprovedGif)) return { kind: 'gif',
     reason: (options.allowApprovedGifs ?? true) ? 'GIFs must come from Tenor, Giphy or KLIPY, or use a GIF exception.' : 'GIFs require an approved role.',
     links: [...new Set([...gifLinks.map(url => url.href), ...media.links])] };
@@ -90,10 +94,11 @@ export class LinkFilterService {
     for (const row of this.ctx.db.all<{ role_id: string; enabled: number }>('SELECT role_id,enabled FROM link_filter_roles WHERE guild_id=?', this.ctx.guild.id)) {
       if (row.enabled) ids.add(row.role_id); else ids.delete(row.role_id);
     }
-    return [...ids];
+    return [...ids].filter(id => !this.ctx.config.linkFilter.gifBlockedRoleIds.includes(id));
   }
   setGifRole(role: Role, enabled: boolean, actorId: string): void {
     if (role.id === this.ctx.guild.id || role.managed) throw new UserError('Choose a regular member role.');
+    if (enabled && this.ctx.config.linkFilter.gifBlockedRoleIds.includes(role.id)) throw new UserError('This role has a GIF restriction. Remove the restriction from config.json before adding an exception.');
     this.ctx.db.run(`INSERT INTO link_filter_roles(guild_id,role_id,enabled,updated_by,updated_at) VALUES(?,?,?,?,?)
       ON CONFLICT(guild_id,role_id) DO UPDATE SET enabled=excluded.enabled,updated_by=excluded.updated_by,updated_at=excluded.updated_at`,
     this.ctx.guild.id, role.id, enabled ? 1 : 0, actorId, Date.now());
@@ -102,13 +107,19 @@ export class LinkFilterService {
     const staff = allowed(s.authorId, member?.roles.cache.keys() ?? [], this.ctx.config);
     const gifRoles = new Set(this.gifRoles());
     return linkViolation(s, { ...this.ctx.config.linkFilter, staff,
+      gifsBlocked: this.ctx.config.linkFilter.gifBlockedRoleIds.some(role => member?.roles.cache.has(role)),
       gifsAllowed: staff || this.ctx.config.linkFilter.unrestrictedGifChannelIds.includes(s.channelId) ||
         [...(member?.roles.cache.keys() ?? [])].some(role => gifRoles.has(role)) });
   }
   /** Returns true while a suspicious submission must be held instead of archived/reposted. */
   prepare(s: MessageSnapshot, recorded = false): boolean {
     if (!this.ctx.config.linkFilter.enabled || s.bot) return false;
-    const violation = this.inspect(s);
+    let violation = this.inspect(s);
+    if (!violation && this.ctx.config.linkFilter.gifBlockedRoleIds.length) {
+      // A provider/channel exception cannot bypass a role granted after the cached event.
+      const eligibility = linkViolation(s, { ...this.ctx.config.linkFilter, staff: false, gifsAllowed: false, gifsBlocked: true });
+      if (eligibility?.kind === 'gif-blocked') violation = eligibility;
+    }
     if (!violation) return false;
     if (!recorded) this.ctx.db.recordMessage(s, 'live');
     this.ctx.db.run(`INSERT INTO link_filter_jobs(message_id,guild_id,channel_id,snapshot,reason,kind,created_at) VALUES(?,?,?,?,?,?,?)

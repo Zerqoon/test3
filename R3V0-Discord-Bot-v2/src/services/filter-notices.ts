@@ -15,6 +15,7 @@ export function filterNoticeText(userId: string, kind: LinkViolation['kind'], pr
   const gifs = [...new Set(providers.map(domain => names[domain] ?? domain))].join(', ');
   const prefix = `<@${userId}> — `;
   if (kind === 'invite') return `${prefix}Discord invites are restricted.`;
+  if (kind === 'gif-blocked') return `${prefix}GIFs are disabled for your account. Contact Support if you need help.`;
   if (kind === 'gif') return `${prefix}Please use **${gifs}** for GIFs. YouTube, TikTok and Roblox links are also allowed.`;
   return `${prefix}This link is not allowed. Approved destinations: **${allowedDomains.join(', ')}**.`;
 }

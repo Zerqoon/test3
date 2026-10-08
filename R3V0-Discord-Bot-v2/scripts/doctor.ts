@@ -17,6 +17,8 @@ console.log(`Message log destination: ${config.channels.messageLogs}`);
 console.log(`Link filter: ${config.linkFilter.enabled ? 'enabled' : 'disabled'}; domains: ${config.linkFilter.allowedDomains.join(', ')}`);
 console.log(`Approved GIFs: ${config.linkFilter.allowApprovedGifs ? 'everyone' : 'role exceptions only'}; providers: ${config.linkFilter.gifProviderDomains.join(', ')}`);
 console.log(`Unrestricted GIF channels: ${config.linkFilter.unrestrictedGifChannelIds.join(', ')}`);
+console.log(`GIF restriction roles (override exceptions): ${config.linkFilter.gifBlockedRoleIds.join(', ')}`);
+console.log(`Clan capacity: 20; blacklist: ${config.tickets.clanBlacklistRoleIds.join(', ')}; commands: /clan-off, /open-ticket count, /clan-status`);
 console.log(`Filter warnings: ${config.linkFilter.notifications.enabled ? 'enabled' : 'disabled'}; delete after ${config.linkFilter.notifications.deleteAfterSeconds}s`);
 console.log(`New role username DMs: ${config.roleUsernameDm.enabled ? 'enabled' : 'disabled'}; initial holders are not notified`);
 console.log(`Banner: ${existsSync('assets/goat-banner.png') ? 'OK' : 'MISSING'}`);

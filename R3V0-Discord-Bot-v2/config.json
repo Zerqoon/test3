@@ -70,7 +70,10 @@
       "enabled": true,
       "channelId": "1557433699572777000",
       "durationSeconds": 180
-    }
+    },
+    "clanBlacklistRoleIds": [
+      "1557809384166391918"
+    ]
   },
   "autoRegisterCommands": true,
   "linkFilter": {
@@ -102,7 +105,10 @@
       "deleteAfterSeconds": 10,
       "cooldownSeconds": 10,
       "maxDelaySeconds": 60
-    }
+    },
+    "gifBlockedRoleIds": [
+      "1557809384166391918"
+    ]
   },
   "roleUsernameDm": {
     "enabled": true,

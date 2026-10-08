@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DateTime } from 'luxon';
 import { z } from 'zod';
+import { defaultGifDomains } from './media.js';
 
 const snowflake = z.string().regex(/^\d{17,20}$/, 'Expected a Discord ID stored as a string');
 export const configSchema = z.object({
@@ -25,9 +26,14 @@ export const configSchema = z.object({
   linkFilter: z.object({ enabled: z.boolean().default(true),
     blockInvites: z.boolean().default(true),
     allowedDomains: z.array(z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/)).default([
-      'giphy.com', 'gph.is', 'tenor.com', 'tiktok.com', 'youtube.com', 'youtu.be', 'roblox.com'
+      'giphy.com', 'gph.is', 'tenor.com', 'klipy.com', 'tiktok.com', 'youtube.com', 'youtu.be', 'roblox.com'
     ]),
-    gifAllowedRoleIds: z.array(snowflake).default([])
+    gifAllowedRoleIds: z.array(snowflake).default([]),
+    allowApprovedGifs: z.boolean().default(true),
+    gifProviderDomains: z.array(z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/)).min(1).default(defaultGifDomains),
+    unrestrictedGifChannelIds: z.array(snowflake).default(['1557577086351179866']),
+    notifications: z.object({ enabled: z.boolean().default(true), deleteAfterSeconds: z.number().int().min(1).max(60).default(10),
+      cooldownSeconds: z.number().int().min(1).max(60).default(10), maxDelaySeconds: z.number().int().min(10).max(300).default(60) }).default({})
   }).default({}),
   giveaways: z.object({ maxDurationDays: z.number().int().min(1).max(3650), maxWinners: z.number().int().min(1).max(20),
     defaultRoleId: snowflake.default('718165098526670948') }),
@@ -35,6 +41,7 @@ export const configSchema = z.object({
     .default({ enabled: true, roleId: '1552638283748737094', syncExistingOnStartup: true }),
   usernameReminder: z.object({ enabled: z.boolean(), roleId: snowflake, deleteAfterSeconds: z.number().int().min(10).max(3600) })
     .default({ enabled: true, roleId: '718165098526670948', deleteAfterSeconds: 60 }),
+  roleUsernameDm: z.object({ enabled: z.boolean().default(true), roleId: snowflake.default('1552474081054564402') }).default({}),
   tickets: z.object({ enabled: z.boolean().default(true), panelChannelId: snowflake.default('1557384522713276488'),
     logChannelId: snowflake.default('1557439533979803678'), categoryId: snowflake.nullable().default(null),
     maxParticipants: z.number().int().min(1).max(50).default(20),

@@ -25,7 +25,7 @@ export async function publishThenDelete(steps: ArchiveSteps): Promise<string> {
 }
 export function archiveSource(message: Message): string | undefined {
   for (const embed of message.embeds) {
-    const match = embed.footer?.text.match(/^GOAT • Username Archive • Source: (\d{17,20})$/);
+    const match = embed.footer?.text.match(/^(?:GOAT • )?Username Archive • Source: (\d{17,20})$/);
     if (match) return match[1];
   }
   return undefined;
@@ -154,7 +154,7 @@ export class UsernameService {
             .setDescription(clip(s.content || '*No text — see attached files or the evidence file.*', 4000))
             .addFields({ name: 'Submitted By', value: `<@${s.authorId}>\n\`${s.authorId}\``, inline: true },
               { name: 'Submitted', value: stamp(s.createdAt), inline: true })
-            .setFooter({ text: `GOAT • Username Archive • Source: ${s.id}` }).setTimestamp(s.createdAt);
+            .setFooter({ text: `Username Archive • Source: ${s.id}` }).setTimestamp(s.createdAt);
           if (firstImage) embed.setImage(firstImage);
           const posted = await channel.send({ embeds: [embed], files, allowedMentions: noMentions, nonce: s.id, enforceNonce: true });
           return posted.id;

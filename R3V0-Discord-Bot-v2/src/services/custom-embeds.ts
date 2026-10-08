@@ -14,7 +14,7 @@ interface EmbedDraft {
 export function customEmbedPayload(input: CustomEmbedInput, roleId?: string | null, userId?: string | null): MessageCreateOptions {
   const title = input.title.trim(), description = input.description.trim();
   if (!description) throw new UserError('Enter the embed message.');
-  if (title.length > 249 || description.length > 4000 || input.outside.length > 1900) throw new UserError('The message is too long. Shorten it and try again.');
+  if (title.length > 256 || description.length > 4000 || input.outside.length > 1900) throw new UserError('The message is too long. Shorten it and try again.');
   let color: number = colors.cyan;
   if (input.color.trim()) {
     if (!/^#?[a-fA-F0-9]{6}$/.test(input.color.trim())) throw new UserError('Use a color such as #22D3EE.');
@@ -53,7 +53,7 @@ export class EmbedService {
       if (placeholder) input.setPlaceholder(placeholder);
       return new LabelBuilder().setLabel(label).setTextInputComponent(input);
     };
-    await interaction.showModal(new ModalBuilder().setCustomId(`goat:embed:modal:${id}`).setTitle('GOAT • Create Embed').addLabelComponents(
+    await interaction.showModal(new ModalBuilder().setCustomId(`goat:embed:modal:${id}`).setTitle('Create Embed').addLabelComponents(
       field('title', 'Title', 249, false, false, 'Announcement'),
       field('description', 'Embed message', 4000, true, true, 'Write the message inside the embed.'),
       field('outside', 'Message outside the embed', 1900, false, true, 'Optional text above the embed. Selected pings are added automatically.'),

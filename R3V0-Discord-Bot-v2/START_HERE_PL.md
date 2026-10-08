@@ -1,4 +1,4 @@
-# GOAT 2.1 — uruchomienie
+# GOAT 2.4 — uruchomienie
 
 Projekt jest przygotowany dla Twojego serwera. Kanały, rola klanu, dwie role administracji oraz Twój osobisty dostęp są już wpisane w `config.json`. Cały interfejs bota jest po angielsku.
 

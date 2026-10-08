@@ -22,7 +22,7 @@ export function installEvents(ctx: Context): void {
   // Raw is emitted before Discord.js mutates its cache. Capture that state in the same call stack.
   client.on(Events.Raw, packet => {
     if (ctx.stopping) return;
-    try { messages.raw(packet); }
+    try { messages.raw(packet); ctx.roleReminders.raw(packet); }
     catch (err) { ctx.logger.error({ event: 'rawMessages', error: errorText(err) }, 'GOAT raw message handler failed'); }
   });
   client.on(Events.MessageCreate, message => protect('messageCreate', () => messages.created(message)));
@@ -31,10 +31,13 @@ export function installEvents(ctx: Context): void {
   client.on(Events.MessageBulkDelete, (deleted, channel) => protect('messageDeleteBulk', () => {
     if (channel.guild.id === ctx.guild.id) messages.bulkMessages(channel.id, deleted.values());
   }));
-  client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => protect('audit', () => { if (guild.id === ctx.guild.id) ctx.audit.ingest(entry); }));
+  client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => protect('audit', () => {
+    if (guild.id === ctx.guild.id) { ctx.audit.ingest(entry); ctx.roleReminders.audit(entry); }
+  }));
   client.on(Events.GuildMemberAdd, member => protect('memberAdd', async () => {
     if (member.guild.id !== ctx.guild.id) return;
     ctx.members.onJoin(member);
+    ctx.roleReminders.onJoin(member);
     ctx.logs.enqueue({ channelId: ctx.config.channels.memberLogs, embeds: [goatEmbed('Member Joined', colors.green).setThumbnail(member.displayAvatarURL({ extension: 'png' }))
       .setDescription(memberDetails(member)).addFields({ name: 'Account Created', value: `${stamp(member.user.createdTimestamp)}\n${stamp(member.user.createdTimestamp, 'R')}`, inline: true },
         { name: 'Joined Server', value: stamp(member.joinedTimestamp ?? Date.now()), inline: true },
@@ -60,6 +63,7 @@ export function installEvents(ctx: Context): void {
   client.on(Events.GuildMemberUpdate, (before, after) => protect('memberUpdate', async () => {
     if (after.guild.id !== ctx.guild.id) return;
     ctx.members.observe(after);
+    ctx.roleReminders.transition(before, after);
     const added = [...after.roles.cache.keys()].filter(id => !before.roles.cache.has(id));
     const removed = [...before.roles.cache.keys()].filter(id => !after.roles.cache.has(id));
     if (added.length || removed.length) {

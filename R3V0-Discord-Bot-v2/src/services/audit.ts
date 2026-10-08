@@ -51,7 +51,7 @@ export class AuditService {
       embed.addFields({ name: 'Access For', value: Number(extra.type) === 0 ? `<@&${extra.id}>` : `<@${extra.id}>` });
     }
     const detailFile = changes.overflow ? textEvidence(`goat-audit-${entry.id}.txt`, `${title}\nAudit ID: ${entry.id}\nActor: ${entry.executorId ?? 'Unknown'}\nTarget: ${entry.targetId ?? 'Unknown'}\n\n${changes.details}`) : undefined;
-    embed.setFooter({ text: `GOAT • Audit ID: ${entry.id}` });
+    embed.setFooter({ text: `Audit ID: ${entry.id}` });
     this.ctx.db.transaction(() => {
       this.ctx.logs.enqueue({ embeds: [embed.toJSON()], files: detailFile ? [detailFile] : undefined }, `audit:${entry.id}`);
       this.ctx.db.run('INSERT OR IGNORE INTO audit_seen(id,created_at) VALUES(?,?)', entry.id, Date.now());

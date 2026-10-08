@@ -6,14 +6,13 @@ import { goatEmbed, colors, logButtons } from '../core/embeds.js';
 import { clip, errorCode, errorText, safeText, UserError } from '../core/util.js';
 import { textEvidence } from './logs.js';
 import { logGifEvent } from './message-events.js';
+import { approvedGifSource, approvedGifUrl, defaultGifDomains, domainIs, gifUrl } from '../core/media.js';
 
 export interface LinkViolation { kind: 'invite' | 'link' | 'gif'; reason: string; links: string[]; }
 interface FilterJob {
   message_id: string; channel_id: string; snapshot: string; reason: string;
-  state: string; attempts: number;
+  state: string; attempts: number; kind: LinkViolation['kind']; created_at: number;
 }
-const gifDomains = ['tenor.com', 'giphy.com', 'gph.is'];
-const domainIs = (host: string, domain: string) => host === domain || host.endsWith(`.${domain}`);
 
 /** Inspect actual destinations, including masked Markdown URLs and bare domains. */
 export function messageLinks(text: string): URL[] {
@@ -37,36 +36,46 @@ export function isDiscordInvite(url: URL): boolean {
       /^\/invite(?:\/|$)/i.test(decodePath(url.pathname)));
 }
 function decodePath(path: string): string { try { return decodeURIComponent(path); } catch { return path; } }
-function gifUrl(url: URL): boolean {
-  const host = url.hostname.toLowerCase().replace(/\.$/, '');
-  return gifDomains.some(domain => domainIs(host, domain)) || /\.gifv?(?:$|\/)/i.test(decodePath(url.pathname)) ||
-    (['cdn.discordapp.com', 'media.discordapp.net'].some(domain => domainIs(host, domain)) &&
-      /^\/attachments\//i.test(url.pathname) && /(?:[?&](?:format|fm)=gif)(?:&|$)/i.test(url.search));
-}
 export function linkViolation(s: MessageSnapshot, options: {
   allowedDomains: string[]; blockInvites: boolean; staff: boolean; gifsAllowed: boolean;
+  allowApprovedGifs?: boolean; gifProviderDomains?: string[];
 }): LinkViolation | undefined {
   if (s.bot || options.staff) return;
   // Top-level embed URLs are destinations; preview thumbnails are Discord-generated resources.
   const links = messageLinks([s.content, ...s.embeds.map(embed => embed.url ?? '')].join('\n'));
   const invites = links.filter(isDiscordInvite);
   if (options.blockInvites && invites.length) return { kind: 'invite', reason: 'Discord invite links are restricted.', links: invites.map(url => url.href) };
-  const gifLinks = links.filter(gifUrl);
-  const media = gifMedia(s);
-  const gifDestinations = new Set(s.embeds.filter(embed => embed.type === 'gifv')
-    .flatMap(embed => [embed.url ?? '', embed.video?.url ?? '']).flatMap(value => messageLinks(value).map(url => url.href)));
+  const providers = options.gifProviderDomains ?? defaultGifDomains;
+  const gifLinks = links.filter(url => gifUrl(url, providers));
+  const media = gifMedia(s, providers);
+  const gifDestinations = new Set<string>();
+  let unapprovedGif = gifLinks.some(url => !approvedGifUrl(url, providers));
+  let hasGif = gifLinks.length > 0;
+  for (const embed of s.embeds) {
+    const trusted = approvedGifSource(embed.url ?? '', providers);
+    if (embed.type !== 'gifv' && !trusted && !/\.gif(?:\?|$)/i.test(embed.image?.url ?? '')) continue;
+    hasGif = true;
+    // A trusted provider may use a separate CDN for preview video/image resources.
+    const source = embed.url || embed.video?.url || embed.image?.url || '';
+    if (!approvedGifSource(source, providers)) unapprovedGif = true;
+    for (const value of [embed.url, embed.video?.url, embed.image?.url]) {
+      for (const url of messageLinks(value ?? '')) gifDestinations.add(url.href);
+    }
+  }
   for (const file of s.attachments) {
     if (/^image\/gif(?:;|$)/i.test(file.contentType ?? '') || /\.gif$/i.test(file.name)) {
+      hasGif = true; unapprovedGif = true;
       for (const url of messageLinks(file.url)) gifDestinations.add(url.href);
     }
   }
-  const hasGif = gifLinks.length || media.links.length || s.embeds.some(embed => embed.type === 'gifv');
-  if (hasGif && !options.gifsAllowed) return { kind: 'gif', reason: 'GIFs require an approved role.',
+  if (hasGif && !options.gifsAllowed && (!(options.allowApprovedGifs ?? true) || unapprovedGif)) return { kind: 'gif',
+    reason: (options.allowApprovedGifs ?? true) ? 'GIFs must come from Tenor, Giphy or KLIPY, or use a GIF exception.' : 'GIFs require an approved role.',
     links: [...new Set([...gifLinks.map(url => url.href), ...media.links])] };
   const blocked = links.filter(url => {
-    if (options.gifsAllowed && (gifUrl(url) || gifDestinations.has(url.href)) && (url.protocol === 'https:' || url.protocol === 'http:')) return false;
+    if ((options.gifsAllowed || ((options.allowApprovedGifs ?? true) && approvedGifUrl(url, providers))) &&
+      (gifUrl(url, providers) || gifDestinations.has(url.href)) && ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) return false;
     const host = url.hostname.toLowerCase().replace(/\.$/, '');
-    return !['https:', 'http:'].includes(url.protocol) || !options.allowedDomains.some(domain => domainIs(host, domain));
+    return !['https:', 'http:'].includes(url.protocol) || !!url.username || !!url.password || !options.allowedDomains.some(domain => domainIs(host, domain));
   });
   if (blocked.length) return { kind: 'link', reason: 'This link destination is not allowed.', links: blocked.map(url => url.href) };
 }
@@ -93,7 +102,8 @@ export class LinkFilterService {
     const staff = allowed(s.authorId, member?.roles.cache.keys() ?? [], this.ctx.config);
     const gifRoles = new Set(this.gifRoles());
     return linkViolation(s, { ...this.ctx.config.linkFilter, staff,
-      gifsAllowed: staff || [...(member?.roles.cache.keys() ?? [])].some(role => gifRoles.has(role)) });
+      gifsAllowed: staff || this.ctx.config.linkFilter.unrestrictedGifChannelIds.includes(s.channelId) ||
+        [...(member?.roles.cache.keys() ?? [])].some(role => gifRoles.has(role)) });
   }
   /** Returns true while a suspicious submission must be held instead of archived/reposted. */
   prepare(s: MessageSnapshot, recorded = false): boolean {
@@ -101,10 +111,10 @@ export class LinkFilterService {
     const violation = this.inspect(s);
     if (!violation) return false;
     if (!recorded) this.ctx.db.recordMessage(s, 'live');
-    this.ctx.db.run(`INSERT INTO link_filter_jobs(message_id,guild_id,channel_id,snapshot,reason,created_at) VALUES(?,?,?,?,?,?)
-      ON CONFLICT(message_id) DO UPDATE SET snapshot=excluded.snapshot,reason=excluded.reason,next_attempt=0,
+    this.ctx.db.run(`INSERT INTO link_filter_jobs(message_id,guild_id,channel_id,snapshot,reason,kind,created_at) VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(message_id) DO UPDATE SET snapshot=excluded.snapshot,reason=excluded.reason,kind=excluded.kind,next_attempt=0,
         state=CASE WHEN link_filter_jobs.state IN ('deleted','removing') THEN link_filter_jobs.state ELSE 'pending' END`,
-    s.id, s.guildId, s.channelId, JSON.stringify(s), violation.reason, Date.now());
+    s.id, s.guildId, s.channelId, JSON.stringify(s), violation.reason, violation.kind, Date.now());
     void this.run(s.id).catch(err => this.ctx.logger.error({ error: errorText(err) }, 'GOAT link filter failed'));
     return true;
   }
@@ -141,7 +151,7 @@ export class LinkFilterService {
       try { message = await channel.messages.fetch({ message: id, force: true, cache: false }); }
       catch (err) {
         if (errorCode(err) !== 10008) throw err;
-        if (job.state === 'removing') this.finish(JSON.parse(job.snapshot) as MessageSnapshot, job.reason, true);
+        if (job.state === 'removing') this.finish(JSON.parse(job.snapshot) as MessageSnapshot, job.reason, job.kind, job.created_at, true);
         else db.run("UPDATE link_filter_jobs SET state='absent',error=NULL WHERE message_id=?", id);
         return;
       }
@@ -159,9 +169,9 @@ export class LinkFilterService {
         this.release(current); return;
       }
       // Save before calling Discord. A concurrent Gateway delete uses this to avoid a second log.
-      db.run("UPDATE link_filter_jobs SET state='removing',snapshot=?,reason=?,error=NULL WHERE message_id=?", JSON.stringify(current), violation.reason, id);
+      db.run("UPDATE link_filter_jobs SET state='removing',snapshot=?,reason=?,kind=?,error=NULL WHERE message_id=?", JSON.stringify(current), violation.reason, violation.kind, id);
       await channel.messages.delete(id);
-      this.finish(current, violation.reason, false);
+      this.finish(current, violation.reason, violation.kind, job.created_at, false);
     } catch (err) {
       const job = db.get<FilterJob>('SELECT * FROM link_filter_jobs WHERE message_id=?', id);
       if (job) db.run('UPDATE link_filter_jobs SET attempts=attempts+1,next_attempt=?,error=? WHERE message_id=?',
@@ -169,7 +179,7 @@ export class LinkFilterService {
       this.ctx.logger.warn({ messageId: id, error: errorText(err) }, 'GOAT link deletion will retry; check Manage Messages and channel access');
     } finally { this.inFlight.delete(id); }
   }
-  private finish(s: MessageSnapshot, reason: string, recovered: boolean): void {
+  private finish(s: MessageSnapshot, reason: string, kind: LinkViolation['kind'], createdAt: number, recovered: boolean): void {
     this.ctx.db.run("UPDATE link_filter_jobs SET state='deleted',error=NULL WHERE message_id=?", s.id);
     this.ctx.db.markDeleted(s.id);
     const embed = goatEmbed('Message Removed · Link Filter', colors.red).setThumbnail(s.avatarUrl)
@@ -181,5 +191,6 @@ export class LinkFilterService {
     this.ctx.logs.enqueue({ channelId: this.ctx.config.channels.messageLogs, embeds: [embed.toJSON()],
       files: [textEvidence(`goat-filter-${s.id}.txt`, `${reason}\n\n${evidence(s)}`)],
       components: logButtons(s.guildId, s.channelId, s.authorId).map(row => row.toJSON()) }, `filter:${s.id}`);
+    this.ctx.filterNotices.enqueue(s, kind, createdAt);
   }
 }

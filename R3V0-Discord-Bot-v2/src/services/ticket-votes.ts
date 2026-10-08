@@ -25,13 +25,13 @@ export function votePanel(ticket: TicketRow, review: TicketReview) {
   const status = review.decision === 'accepted' ? 'Accepted' : review.decision === 'rejected' ? 'Rejected' :
     review.state === 'cancelled' ? 'Cancelled' : review.state === 'waiting' ? 'Waiting for Start Vote' : voting ? 'Voting open' : 'Awaiting review';
   const color = review.decision === 'accepted' ? colors.green : review.decision === 'rejected' ? colors.red : colors.cyan;
-  const embed = goatEmbed('Clan Application', color).setTitle(`GOAT • ${safeText(ticket.owner_name ?? 'Clan Applicant', 100)}`)
-    .setDescription(`## @${ticket.roblox_username ?? 'Not supplied'}\n**${status}**`)
-    .addFields({ name: 'Yes', value: String(review.yes_count), inline: true }, { name: 'No', value: String(review.no_count), inline: true });
-  if (voting) embed.addFields({ name: 'Closes', value: `${stamp(review.ends_at, 'R')} • First to 3 decides immediately` });
+  const embed = goatEmbed(safeText(ticket.owner_name ?? 'Clan Applicant', 100), color)
+    .setDescription(`## @${ticket.roblox_username ?? 'Not supplied'}\n<@${ticket.owner_id}> · **${status}**`)
+    .addFields({ name: 'Yes', value: `**${review.yes_count} / 3**`, inline: true }, { name: 'No', value: `**${review.no_count} / 3**`, inline: true });
+  if (voting) embed.addFields({ name: 'Closes', value: `${stamp(review.ends_at, 'R')}\nFirst to **3 Yes** or **3 No** decides immediately. Otherwise the majority wins when time ends.` });
   else if (review.state === 'review') embed.addFields({ name: 'Result', value: review.yes_count + review.no_count === 0 ? 'No votes — awaiting a decision.' : 'Tie — awaiting a decision.' });
   if (review.decision && review.reason) embed.addFields({ name: 'Reason', value: safeText(review.reason, 900) });
-  embed.setFooter({ text: `GOAT • Application #${String(ticket.id).padStart(4, '0')}` });
+  embed.setFooter({ text: `Application #${String(ticket.id).padStart(4, '0')}` });
   return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`goat:ticket:vote-yes:${ticket.id}`).setLabel('Vote Yes').setStyle(ButtonStyle.Success).setDisabled(!voting),
     new ButtonBuilder().setCustomId(`goat:ticket:vote-no:${ticket.id}`).setLabel('Vote No').setStyle(ButtonStyle.Danger).setDisabled(!voting))], allowedMentions: noMentions };
@@ -133,7 +133,7 @@ export class TicketVoteService {
     const ticket = this.ctx.tickets.get(id);
     if (interaction.channelId !== ticket.channel_id || ticket.kind !== 'application' || ticket.state !== 'open') throw new UserError('Use the controls inside an open application ticket.');
     await interaction.showModal(new ModalBuilder().setCustomId(`goat:ticket:${decision === 'accepted' ? 'approve-modal' : 'reject-modal'}:${id}`)
-      .setTitle(`GOAT • ${decision === 'accepted' ? 'Approve' : 'Reject'} Application`).addLabelComponents(new LabelBuilder().setLabel('Reason')
+      .setTitle(`${decision === 'accepted' ? 'Approve' : 'Reject'} Application`).addLabelComponents(new LabelBuilder().setLabel('Reason')
         .setTextInputComponent(new TextInputBuilder().setCustomId('reason').setStyle(TextInputStyle.Paragraph).setRequired(true)
           .setMaxLength(1000).setPlaceholder('This reason will be included in the applicant’s DM.'))));
   }
@@ -199,8 +199,8 @@ export class TicketVoteService {
       .setDescription(approved ? 'Your GOAT clan application has been accepted. Welcome to GOAT!' : 'Your GOAT clan application has been rejected.')
       .addFields({ name: 'Roblox', value: `\`@${ticket.roblox_username ?? 'Not supplied'}\`` },
         { name: 'Reason', value: safeText(review.reason ?? 'Application reviewed.', 1000) },
-        { name: 'Decided By', value: review.decided_by === this.ctx.client.user!.id ? 'GOAT • Community vote' : `<@${review.decided_by}>` })
-      .setFooter({ text: `GOAT • Application #${String(id).padStart(4, '0')}` });
+        { name: 'Decided By', value: review.decided_by === this.ctx.client.user!.id ? 'Community vote' : `<@${review.decided_by}>` })
+      .setFooter({ text: `Application #${String(id).padStart(4, '0')}` });
     try {
       const user = await this.ctx.client.users.fetch(ticket.owner_id);
       await user.send({ embeds: [embed], allowedMentions: noMentions, nonce: `goat-decision-${id}`, enforceNonce: true });

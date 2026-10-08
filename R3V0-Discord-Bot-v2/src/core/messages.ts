@@ -1,5 +1,6 @@
 import type { APIMessage, Message, PartialMessage } from 'discord.js';
 import type { MessageSnapshot } from './types.js';
+import { approvedGifSource, defaultGifDomains, gifUrl } from './media.js';
 
 export function snapshotMessage(message: Message): MessageSnapshot {
   if (!message.guildId) throw new Error('Only guild messages can be indexed.');
@@ -55,13 +56,13 @@ export function rawSnapshot(data: RawMessageData, before?: MessageSnapshot): Mes
 export function botMarker(s: MessageSnapshot): MessageSnapshot {
   return { ...s, content: '', embeds: [], attachments: [], stickers: [] };
 }
-export function gifMedia(s: MessageSnapshot): { links: string[]; preview?: string } {
+export function gifMedia(s: MessageSnapshot, providers: readonly string[] = defaultGifDomains): { links: string[]; preview?: string } {
   const links = new Set<string>();
   let preview: string | undefined;
   for (const match of s.content.matchAll(/https?:\/\/[^\s<>]+/gi)) {
     try {
       const u = new URL(match[0]);
-      if (/(^|\.)(tenor\.com|giphy\.com|gph\.is)$/.test(u.hostname.replace(/\.$/, '')) || /\.gifv?$/i.test(u.pathname)) links.add(u.href);
+      if (gifUrl(u, providers)) links.add(u.href);
       if (/\.gif$/i.test(u.pathname)) preview ??= u.href;
     } catch { /* Invalid text is not a media URL. */ }
   }
@@ -69,9 +70,7 @@ export function gifMedia(s: MessageSnapshot): { links: string[]; preview?: strin
     if (/^image\/gif(?:;|$)/i.test(a.contentType ?? '') || /\.gif$/i.test(a.name)) { links.add(a.url); preview ??= a.url; }
   }
   for (const e of s.embeds) {
-    let gifProvider = false;
-    try { gifProvider = /(^|\.)(tenor\.com|giphy\.com|gph\.is)$/.test(new URL(e.url ?? '').hostname.replace(/\.$/, '')); }
-    catch { /* Missing or invalid provider URL. */ }
+    const gifProvider = approvedGifSource(e.url ?? '', providers);
     if (e.type === 'gifv' || gifProvider || /\.gif(?:\?|$)/i.test(e.image?.url ?? '')) {
       if (e.url) links.add(e.url);
       if (e.video?.url) links.add(e.video.url);

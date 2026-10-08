@@ -12,7 +12,7 @@ import { routeInteraction } from '../src/commands/router.js';
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
 const emit = (f: ReturnType<typeof fixture>, event: string, ...args: unknown[]) => (f.ctx.client as unknown as EventEmitter).emit(event, ...args);
 const raw = (f: ReturnType<typeof fixture>, t: string, d: unknown) => emit(f, 'raw', { t, d });
-const rules = { allowedDomains: ['giphy.com', 'gph.is', 'tenor.com', 'tiktok.com', 'youtube.com', 'youtu.be', 'roblox.com'], blockInvites: true, staff: false, gifsAllowed: false };
+const rules = { allowedDomains: ['giphy.com', 'gph.is', 'tenor.com', 'klipy.com', 'tiktok.com', 'youtube.com', 'youtu.be', 'roblox.com'], blockInvites: true, staff: false, gifsAllowed: false };
 function snapshot(content: string): MessageSnapshot {
   return { id: '1550000000001000200', guildId: GUILD, channelId: '1550000000001000201', authorId: ALICE,
     username: 'Stormy', displayName: 'Stormy', avatarUrl: 'https://cdn.discordapp.com/embed/avatars/0.png',
@@ -37,7 +37,7 @@ for (const [url, kind] of [
   ['ftp://youtube.com/video', 'link'], ['discord.gg/GOAT', 'invite'],
   ['[YouTube](https://canary.discord.com/invite/GOAT)', 'invite'],
   ['DISCORDAPP.COM/%69nvite/GOAT', 'invite'], ['discord.\u200Bgg/GOAT', 'invite'],
-  ['https://tenor.com/view/goat', 'gif'], ['https://tenor.com./view/goat', 'gif'], ['https://giphy.com/gifs/goat', 'gif'],
+  ['https://tenor.com/view/goat', undefined], ['https://tenor.com./view/goat', undefined], ['https://giphy.com/gifs/goat', undefined],
   ['https://cdn.discordapp.com/attachments/1/2/goat.gif', 'gif']
 ] as const) test(`link policy: ${url}`, () => {
   assert.equal(linkViolation(snapshot(url), rules)?.kind, kind);
@@ -287,7 +287,7 @@ test('private diagnostics verify the destination and direct delivery tests bypas
   f.ctx.logs.enqueue({ channelId, embeds: [{ title: 'Saved log' }] }, 'saved'); f.setSendFailure(true); await f.ctx.logs.flush(); f.setSendFailure(false);
   const url = await f.ctx.logs.testMessageLogs(STAFF); assert.match(url, new RegExp(channelId));
   assert.equal(f.ctx.logs.pending(), 1); assert.equal(f.sent[0].channelId, channelId);
-  const diagnostic = (await f.ctx.logs.messageStatus()).toJSON(); assert.equal(diagnostic.fields!.find(field => field.name === 'Version')!.value, '2.3.0');
+  const diagnostic = (await f.ctx.logs.messageStatus()).toJSON(); assert.equal(diagnostic.fields!.find(field => field.name === 'Version')!.value, '2.4.0');
   assert.match(diagnostic.fields!.find(field => field.name === 'Channel Access')!.value, /verified/);
   assert.equal(f.ctx.logs.retryMessageLogs(), 1); await f.ctx.logs.flush(); assert.equal(f.ctx.logs.pending(), 0); f.ctx.db.close();
 });

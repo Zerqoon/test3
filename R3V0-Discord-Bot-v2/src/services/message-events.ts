@@ -17,7 +17,7 @@ function sameContent(a: MessageSnapshot, b: MessageSnapshot): boolean {
 }
 export function logGifEvent(ctx: Context, s: MessageSnapshot): void {
   if (!ctx.config.logging.logGifs || s.bot) return;
-  const media = gifMedia(s); if (!media.links.length) return;
+  const media = gifMedia(s, ctx.config.linkFilter.gifProviderDomains); if (!media.links.length) return;
   const embed = goatEmbed('GIF Sent', colors.purple).setThumbnail(s.avatarUrl).setDescription(clip(s.content || '*GIF attachment*', 2000))
     .addFields(...userFields(s), { name: 'GIF / Media Links', value: clip(media.links.join('\n'), 1000) });
   if (media.preview?.startsWith('https://')) embed.setImage(media.preview);

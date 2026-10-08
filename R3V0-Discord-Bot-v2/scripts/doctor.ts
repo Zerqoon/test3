@@ -15,7 +15,10 @@ console.log('Ticket voting: manual Start Vote • 180s • first to 3 • majori
 console.log('Logs: raw Gateway capture + durable snapshots; /message-logs status, test, retry');
 console.log(`Message log destination: ${config.channels.messageLogs}`);
 console.log(`Link filter: ${config.linkFilter.enabled ? 'enabled' : 'disabled'}; domains: ${config.linkFilter.allowedDomains.join(', ')}`);
-console.log('GIF exceptions: configured staff/owner + persisted /link-filter role overrides');
+console.log(`Approved GIFs: ${config.linkFilter.allowApprovedGifs ? 'everyone' : 'role exceptions only'}; providers: ${config.linkFilter.gifProviderDomains.join(', ')}`);
+console.log(`Unrestricted GIF channels: ${config.linkFilter.unrestrictedGifChannelIds.join(', ')}`);
+console.log(`Filter warnings: ${config.linkFilter.notifications.enabled ? 'enabled' : 'disabled'}; delete after ${config.linkFilter.notifications.deleteAfterSeconds}s`);
+console.log(`New role username DMs: ${config.roleUsernameDm.enabled ? 'enabled' : 'disabled'}; initial holders are not notified`);
 console.log(`Banner: ${existsSync('assets/goat-banner.png') ? 'OK' : 'MISSING'}`);
 console.log(`Application example: ${existsSync('assets/application-mastery-example.png') ? 'OK' : 'MISSING'}`);
 console.log(`Font: ${existsSync('assets/fonts/DejaVuSans-Bold.ttf') ? 'OK' : 'MISSING'}`);

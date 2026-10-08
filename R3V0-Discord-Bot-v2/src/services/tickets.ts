@@ -35,11 +35,11 @@ export function ticketOverwrites(config: Config, guildId: string, botId: string,
   return [...rows.values()];
 }
 export function ticketPanel() {
-  return { embeds: [goatEmbed('Clan Hub', colors.cyan).setDescription('Your next chapter starts with **GOAT**.')
-    .setThumbnail('attachment://goat-banner.png')
-    .addFields({ name: '📋  Clan Application', value: 'Apply to the clan. Share your Roblox username and four screenshots.' },
-      { name: '🎫  Support', value: 'Questions or a problem? Open a private conversation.' })
-    .setFooter({ text: 'GOAT • One open ticket per member' }).setTimestamp(null)],
+  return { embeds: [goatEmbed('Applications & Support', colors.cyan).setDescription('Choose how we can help. Enter your Roblox **@username** to open a private ticket.')
+    .setImage('attachment://goat-banner.png')
+    .addFields({ name: '📋  Clan Application', value: 'Share four screenshots and answer the AFK question. Your application is reviewed by a vote.', inline: true },
+      { name: '🎫  Support', value: 'Ask a question or report an issue. Add details and screenshots so we can help.', inline: true })
+    .setFooter({ text: 'One open ticket per member' }).setTimestamp(null)],
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId('goat:ticket:open:application').setLabel('Clan Application').setEmoji('📋').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('goat:ticket:open:support').setLabel('Support').setEmoji('🎫').setStyle(ButtonStyle.Primary))] };
@@ -51,8 +51,9 @@ export function applicationRequirements() {
     '**2 · Gamepasses** — show your owned gamepasses.\n' +
     '**3 · Inventory** — show your inventory.\n' +
     '**4 · Stats** — show your in-game stats.\n' +
-    '**5 · Can you be AFK 24/7?** — answer Yes or No in this ticket.')
-    .setImage('attachment://application-mastery-example.png').setFooter({ text: 'GOAT • Keep the conversation in this ticket' }).setTimestamp(null);
+    '**5 · Can you be AFK 24/7?** — answer Yes or No in this ticket.\n\n' +
+    'Once your screenshots are ready, the team can start the **3-minute vote**.')
+    .setImage('attachment://application-mastery-example.png').setFooter({ text: 'Keep the conversation in this ticket' }).setTimestamp(null);
 }
 export function normalizeRobloxUsername(input: string): string {
   const name = input.trim().replace(/^@/, '');
@@ -196,7 +197,7 @@ export class TicketService {
     const id = randomUUID();
     this.ctx.db.run('INSERT INTO ticket_requests(id,guild_id,user_id,kind,panel_message_id,expires_at) VALUES(?,?,?,?,?,?)', id,
       this.ctx.guild.id, interaction.user.id, kind, interaction.message.id, Date.now() + 900000);
-    await interaction.showModal(new ModalBuilder().setCustomId(`goat:ticket:open-modal:${id}`).setTitle(`GOAT • ${kindName(kind)}`).addLabelComponents(
+    await interaction.showModal(new ModalBuilder().setCustomId(`goat:ticket:open-modal:${id}`).setTitle(`${kindName(kind)}`).addLabelComponents(
       new LabelBuilder().setLabel('Roblox username').setDescription('The username after @ on your Roblox profile, not your display name.')
         .setTextInputComponent(new TextInputBuilder().setCustomId('roblox-username').setStyle(TextInputStyle.Short)
           .setRequired(true).setMinLength(3).setMaxLength(21).setPlaceholder('@YourRobloxUsername'))));
@@ -274,9 +275,12 @@ export class TicketService {
       .setDescription(safeText(ticket.close_reason ?? 'This conversation has ended.', 1000)) :
       ticket.kind === 'application' ? applicationRequirements() : goatEmbed('Support', colors.cyan)
         .setDescription('Describe what you need help with. Add screenshots if they help explain the problem.').setThumbnail('attachment://goat-banner.png');
-    embed.setTitle(`GOAT • ${label} #${String(ticket.id).padStart(4, '0')}`).setTimestamp(null)
-      .setFooter({ text: closed ? 'GOAT • Conversation saved' : 'GOAT • Keep the conversation in this ticket' });
+    embed.setTitle(`${label} #${String(ticket.id).padStart(4, '0')}`).setTimestamp(null)
+      .setFooter({ text: closed ? 'Conversation saved' : 'Keep the conversation in this ticket' });
     embed.setDescription(`## @${ticket.roblox_username ?? 'Not supplied before update'}\n${embed.data.description ?? ''}`);
+    embed.addFields({ name: 'Member', value: `<@${ticket.owner_id}>\n${safeText(ticket.owner_name ?? 'Member', 100)}`, inline: true },
+      { name: 'Status', value: closed ? label : review?.state === 'voting' ? 'Voting in progress' : 'Open', inline: true },
+      { name: 'Handler', value: ticket.claimed_by ? `<@${ticket.claimed_by}>` : 'Available for the team', inline: true });
     return { embeds: [embed], components: ticketControls(ticket, review), files: closed ? [] : [new AttachmentBuilder(resolve(
       ticket.kind === 'application' ? 'assets/application-mastery-example.png' : 'assets/goat-banner.png'))], allowedMentions: noMentions };
   }
@@ -312,7 +316,7 @@ export class TicketService {
     await this.access(interaction, ticket, action === 'claim' || action === 'delete' || action === 'delete-confirm' || (action === 'reopen' && !!this.votes.get(ticket.id)?.decision));
     if (action === 'close') {
       if (ticket.state !== 'open') throw new UserError('This ticket is already closed or is being updated.');
-      await interaction.showModal(new ModalBuilder().setCustomId(`goat:ticket:close-modal:${ticket.id}`).setTitle('GOAT • Close Ticket').addLabelComponents(
+      await interaction.showModal(new ModalBuilder().setCustomId(`goat:ticket:close-modal:${ticket.id}`).setTitle('Close Ticket').addLabelComponents(
         new LabelBuilder().setLabel('Reason').setTextInputComponent(new TextInputBuilder().setCustomId('reason').setStyle(TextInputStyle.Paragraph)
           .setRequired(true).setMaxLength(1000).setPlaceholder('Why is this ticket being closed?')))); return;
     }

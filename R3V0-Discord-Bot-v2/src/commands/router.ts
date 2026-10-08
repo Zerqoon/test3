@@ -9,6 +9,7 @@ import { renderWelcome } from '../services/welcome.js';
 import type { GiveawayRow } from '../services/giveaways.js';
 import type { CaseRow } from '../services/moderation.js';
 import type { TicketRow } from '../services/tickets.js';
+import { helpPanel } from './help.js';
 
 function coverage(ctx: Context): string {
   const s = ctx.history.summary();
@@ -16,7 +17,7 @@ function coverage(ctx: Context): string {
   return `${s.indexed.toLocaleString('en-US')} messages indexed • ${ctx.history.running ? 'import in progress' : state}${s.errors ? ` • ${s.errors} channels with errors` : ''}\nOnly available, accessible history can be counted. Deleted messages already observed by GOAT remain in the totals.`;
 }
 async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<void> {
-  const name = i.commandName;
+  const name = i.commandName === 'ticket' ? `ticket-${i.options.getSubcommand()}` : i.commandName;
   if (name === 'giveway-create' || name === 'giveaway-create' || name === 'embed') {
     await requireStaff(i, ctx.config);
     if (name === 'embed') await ctx.embeds.create(i);
@@ -129,12 +130,15 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
       const tickets = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM tickets WHERE guild_id=? AND state IN ('creating','open','closing','reopening')", ctx.guild.id)!.n;
       const roles = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM autorole_jobs WHERE guild_id=? AND status='pending'", ctx.guild.id)!.n;
       const embeds = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM custom_embeds WHERE guild_id=? AND state='publishing'", ctx.guild.id)!.n;
+      const dm = ctx.roleReminders.counts();
       await i.editReply({ embeds: [goatEmbed('System Status', colors.green).addFields({ name: 'Version', value: VERSION, inline: true }, { name: 'Uptime', value: humanDuration(Date.now() - ctx.startedAt), inline: true },
         { name: 'Gateway', value: `${ctx.client.ws.ping} ms`, inline: true }, { name: 'Queued Logs', value: String(ctx.logs.pending()), inline: true },
         { name: 'Username Jobs', value: String(pending), inline: true }, { name: 'Live Giveaways', value: String(live), inline: true },
         { name: 'Active Tickets', value: String(tickets), inline: true }, { name: 'Autorole Queue', value: String(roles), inline: true },
         { name: 'Embed Queue', value: String(embeds), inline: true },
         { name: 'Link Filter Queue', value: String(ctx.linkFilter.pending()), inline: true },
+        { name: 'Role Username DMs', value: `${dm.pending} queued · ${dm.sent} sent · ${dm.closed} DMs disabled` },
+        { name: 'Filter Warnings', value: `${ctx.filterNotices.pending()} queued · auto-delete after ${ctx.config.linkFilter.notifications.deleteAfterSeconds}s` },
         { name: 'Log Delivery', value: ctx.logs.health() },
         { name: 'History', value: coverage(ctx) }, { name: 'Current Task', value: ctx.history.progress },
         { name: 'Thread Coverage', value: ctx.db.meta('history_thread_warning') ?? 'No enumeration error recorded' })], allowedMentions: noMentions }); return;
@@ -156,21 +160,22 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
         const role = await ctx.guild.roles.fetch(selected.id);
         if (!role) throw new UserError('That role no longer exists.');
         ctx.linkFilter.setGifRole(role, action === 'allow-role', i.user.id);
-        await reply('Link Filter', action === 'allow-role' ? 'The selected role can now send GIFs. Discord invites and other unrelated links remain restricted.' : 'The GIF exception has been removed.');
+        await reply('Link Filter', action === 'allow-role' ? 'The selected role can now send GIFs from any source. Discord invites and unrelated links remain restricted.' : 'The GIF exception has been removed.');
       } else {
         const roles = ctx.linkFilter.gifRoles();
         await i.editReply({ embeds: [goatEmbed('Link Filter').addFields(
           { name: 'Status', value: ctx.config.linkFilter.enabled ? 'Enabled — new messages and edits.' : 'Disabled' },
           { name: 'Allowed Link Domains', value: clip(ctx.config.linkFilter.allowedDomains.join('\n'), 1000) || 'None' },
+          { name: 'Approved GIF Providers', value: `${ctx.config.linkFilter.allowApprovedGifs ? 'Available to everyone' : 'Requires a GIF role exception'}\n${clip(ctx.config.linkFilter.gifProviderDomains.join(', '), 900)}` },
+          { name: 'Channels With Unrestricted GIFs', value: clip(ctx.config.linkFilter.unrestrictedGifChannelIds.map(id => `<#${id}>`).join(' '), 1000) || 'None' },
           { name: 'GIF Exceptions', value: clip(roles.map(role => `<@&${role}>`).join(' '), 1000) || 'No additional roles configured.' },
-          { name: 'Removal Queue', value: String(ctx.linkFilter.pending()), inline: true })], allowedMentions: noMentions });
+          { name: 'Removal Queue', value: String(ctx.linkFilter.pending()), inline: true },
+          { name: 'Feedback', value: ctx.config.linkFilter.notifications.enabled ? `Warnings disappear after ${ctx.config.linkFilter.notifications.deleteAfterSeconds}s.` : 'Disabled' })], allowedMentions: noMentions });
       }
       return;
     }
     case 'help': {
-      const description = '**Activity**\n/messages [user]\n/leaderboard [period] [page]\n\n**Giveaway Entry**\nUse Enter Giveaway. Your private confirmation lets you leave.\n\n**Tickets**\nUse Clan Application or Support on the ticket panel.' +
-        '\n\n**GOAT Tools**\n/embed [channel] [ping-role] [ping-user]\n/giveway-create (also /giveaway-create)\n/giveaway-list • /giveaway-end • /giveaway-reroll • /giveaway-cancel\n/ban • /unban • /mute • /unmute • /warn • /warnings • /case\n/history-sync • /username-retry • /username-remove\n/nickname-sync • /autorole-sync • /welcome-preview • /goat-status\n/message-logs • /link-filter\n/ticket-panel • /ticket-list • /ticket-add • /ticket-remove • /ticket-close • /ticket-start-vote • /ticket-approve • /ticket-reject • /ticket-repair';
-      await reply('Commands', description); return;
+      await i.editReply(helpPanel()); return;
     }
     default: throw new UserError('This command is not registered in the current GOAT version.');
   }
@@ -209,6 +214,7 @@ export async function routeInteraction(ctx: Context, i: Interaction): Promise<vo
     if (i.isButton()) {
       const [brand, system, action, id] = i.customId.split(':');
       if (brand !== 'goat' || !id) return;
+      if (system === 'help' && action === 'page') { await i.reply({ ...helpPanel(id), flags: MessageFlags.Ephemeral }); return; }
       if (system === 'ticket') { await ctx.tickets.button(i, action, id); return; }
       if (system === 'giveaway' && (action === 'enter' || action === 'leave')) { await ctx.giveaways.entry(i, id, action === 'leave'); return; }
       await requireStaff(i, ctx.config);

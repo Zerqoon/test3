@@ -1,6 +1,6 @@
 {
   "name": "goat-clan-bot",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "description": "GOAT clan Discord bot \u2014 immutable usernames, audit logs, giveaways and activity tracking",
   "type": "module",

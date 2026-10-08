@@ -1,10 +1,12 @@
 # Local validation
 
+Version **2.4.0**, SQLite schema **7**.
+
 Validated on Node.js v24.19.0 with discord.js 14.27.0.
 
 - Strict TypeScript compilation: passed.
-- Behavioral tests: **124 passed, 0 failed**.
-- Native giveaway modal: four labelled text inputs plus a mandatory role selector; **36** slash command definitions serialized successfully.
+- Behavioral tests: **155 passed, 0 failed**.
+- Native giveaway modal: four labelled text inputs plus a mandatory role selector; **37** slash command definitions serialized successfully.
 - Welcome renderer: produced the bundled 1200 × 675 PNG and was visually inspected.
 - Local doctor: valid configuration, GOAT banner, application screenshot example and font present, guild auto-detection enabled.
 - Railway environment simulation: rejects missing volumes and database paths outside the mount; accepts the configured volume and passes diagnostics.
@@ -22,5 +24,7 @@ Version 2.2 checks manual-only Start Vote, staff role loss / owner fallback, exa
 Version 2.2 also validates the native five-input /embed form, separate outside text, exact selected-role / user mention permissions, inert @everyone text, hex colors, HTTPS images, length / empty-message validation, fresh submitter access and form ownership, duplicate submission protection, queued send recovery after restart, and the fifth application question about 24/7 AFK.
 
 Version 2.3 validates raw Gateway edits/deletes without a cached channel, raw-before-cache-mutation capture, raw/high-level deduplication, partial payload merging, preview persistence without edit noise, stale-event rejection, human edits inside log channels, lightweight bot markers, bulk TXT evidence, explicit unavailable-content labels, masked/bare invite URLs, hostname boundary/credential/lookalike bypasses, approved video previews, ordinary image attachments, GIF attachment restrictions, configured staff/owner exemptions, fresh role loss, persistent GIF role overrides, restricted invite bypass, live edited invitations, filtering before username archiving, single removal logging, retry after missing permissions, restart/absence reconciliation, safe edits while an authorization request is in flight, failed authorization retry, invalid-payload isolation within one channel, direct delivery diagnostics independent of the old queue, exact missing permissions, private native role commands and webhook bot identification. The schema upgrade preserves the existing message ledger and all prior systems while adding filter jobs/role overrides.
+
+Version 2.4 checks public Tenor/Giphy/KLIPY GIFs and clips, static.klipy.com, mixed approved/unapproved media, trusted preview resources, credential/suffix spoofing, unrestricted GIF channel with invite/link restrictions retained, legacy configurable role gating, member-only warnings, exact ten-second deletion, cooldown coalescing, nonce publication recovery, stale-warning expiry, cleanup during slow member synchronization, existing-holder exclusion, new role-grant DMs, duplicate raw/audit events, pre-rollout audit rejection, uncached audit grants, transient/closed DMs, member departure, role removal during a slow fetch, baseline races, new joins/bot exclusion, schema 7 migration, unbranded embed and legacy archive recovery, 256-character custom titles, public help buttons, grouped ticket authorization, in-place panel refresh, prominent username and the unchanged manual three-minute vote.
 
 Discord requests in tests use local API doubles. No token was supplied, so login, real server permission configuration, live gateway behavior and actual DM delivery have not been tested on a Discord server. Docker, the Windows launcher and UPLOAD-GITHUB.ps1 are included; Docker / PowerShell platform execution has not been performed in this Linux environment. GitHub Actions, repository push and actual Railway hosting have not been run under a connected account. The bundled subfolder workflow targets R3V0-Discord-Bot-v2; the upload script installs it at the repository root.

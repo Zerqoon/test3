@@ -37,7 +37,7 @@ export function giveawayModal(draftId: string, values?: DraftValues, defaultRole
   const roles = new RoleSelectMenuBuilder().setCustomId('required_role').setMinValues(1).setMaxValues(1)
     .setRequired(true).setPlaceholder('Choose the required role');
   if (values?.roleId ?? defaultRoleId) roles.setDefaultRoles((values?.roleId ?? defaultRoleId)!);
-  return new ModalBuilder().setCustomId(`goat:giveaway:modal:${draftId}`).setTitle('GOAT • Create Giveaway').addLabelComponents(
+  return new ModalBuilder().setCustomId(`goat:giveaway:modal:${draftId}`).setTitle('Create Giveaway').addLabelComponents(
     text('title', 'Giveaway Title', 'GOAT Clan Giveaway', 160, values?.title),
     text('prize', 'Prize', 'What will the winner receive?', 240, values?.prize),
     text('duration', 'Duration', '1s / 10s / 1m / 1 minute / 1h 30m', 100, values?.duration),
@@ -185,7 +185,7 @@ export class GiveawayService {
       const winners = draw ? JSON.parse(draw.winners_json) as string[] : [];
       embed.addFields({ name: 'Selected Winners', value: winners.map(id => `<@${id}>`).join(', ') || 'No eligible entries' });
     }
-    return embed.setFooter({ text: 'GOAT' });
+    return embed;
   }
   private async findMessage(channel: GuildTextBasedChannel, footer: string, since: number, url?: string, legacyFooter?: string): Promise<Message | undefined> {
     let before: string | undefined;
@@ -194,7 +194,7 @@ export class GiveawayService {
       const list = [...page.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp);
       const originalId = footer.startsWith('GOAT • Giveaway ID: ') ? footer.slice('GOAT • Giveaway ID: '.length) : undefined;
       const found = list.find(m => m.author.id === this.ctx.client.user?.id &&
-        (m.embeds.some(e => (e.footer?.text === footer && (!url || e.url === url)) || (!!legacyFooter && e.footer?.text === legacyFooter)) ||
+        (m.embeds.some(e => ((e.footer?.text === footer || e.footer?.text === `GOAT • ${footer}`) && (!url || e.url === url)) || (!!legacyFooter && e.footer?.text === legacyFooter)) ||
           (!!originalId && m.components?.some(row => 'components' in row && row.components.some(component =>
             'customId' in component && component.customId === `goat:giveaway:enter:${originalId}`)))));
       if (found) return found;
@@ -306,7 +306,7 @@ export class GiveawayService {
     await this.update(this.get(g.id));
     if (!draw.announced_id) {
       const channel = await this.validateChannel(g.channel_id);
-      const footer = `GOAT • Draw ${draw.round}`;
+      const footer = `Draw ${draw.round}`;
       const url = `https://discord.com/channels/${g.guild_id}/${g.channel_id}/${g.message_id}`;
       let announcement = await this.findMessage(channel, footer, draw.drawn_at, url, `GOAT • Giveaway ${g.id} • Draw ${draw.round}`);
       if (!announcement) announcement = await channel.send({ content: winners.length ? winners.map(id => `<@${id}>`).join(' ') : undefined,

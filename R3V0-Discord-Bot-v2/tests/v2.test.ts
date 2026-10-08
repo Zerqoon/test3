@@ -136,7 +136,7 @@ test('ticket overwrites deny outsiders and grant only opener, invited members, s
 
 test('ticket panel and application checklist include the supplied branding and four screenshots', () => {
   const panel = ticketPanel(); assert.deepEqual(panel.components[0].toJSON().components.map(component => 'label' in component ? component.label : ''), ['Clan Application', 'Support']);
-  assert.equal(panel.embeds[0].toJSON().thumbnail?.url, 'attachment://goat-banner.png');
+  assert.equal(panel.embeds[0].toJSON().image?.url, 'attachment://goat-banner.png');
   const requirements = applicationRequirements().toJSON(); assert.equal(requirements.image?.url, 'attachment://application-mastery-example.png');
   for (const phrase of ['Mastery', 'Gamepasses', 'Inventory', 'Stats', '@username']) assert.ok(requirements.description?.includes(phrase));
   for (const id of [...config.access.staffRoleIds, ...config.access.ownerUserIds]) assert.ok(!JSON.stringify(panel).includes(id));
@@ -219,7 +219,7 @@ test('legacy database migration preserves activity totals while adding log and t
   db.recordMessage(snapshot, 'live'); db.run('ALTER TABLE log_outbox DROP COLUMN batch_id'); db.close();
   const migrated = new Store(file); assert.equal(migrated.count(GUILD, ALICE), 1);
   assert.ok(migrated.all<{ name: string }>('PRAGMA table_info(log_outbox)').some(column => column.name === 'batch_id'));
-  assert.equal(migrated.meta('schema_version'), '6'); migrated.close(); rmSync(path, { recursive: true, force: true });
+  assert.equal(migrated.meta('schema_version'), '7'); migrated.close(); rmSync(path, { recursive: true, force: true });
 });
 
 test('Roblox form requires a real username shape and cannot create a channel before submission', async () => {
@@ -400,7 +400,7 @@ test('upgrade migrates ticket username and review structures without resetting t
   original.setMeta('username_reminder_started_at', '123'); original.run('ALTER TABLE tickets DROP COLUMN roblox_username'); original.run('ALTER TABLE tickets DROP COLUMN owner_name'); original.close();
   const migrated = new Store(file); const columns = migrated.all<{ name: string }>('PRAGMA table_info(tickets)');
   assert.ok(columns.some(column => column.name === 'roblox_username')); assert.equal(migrated.meta('username_reminder_started_at'), '123');
-  assert.equal(migrated.meta('schema_version'), '6'); assert.equal(VERSION, '2.3.0');
+  assert.equal(migrated.meta('schema_version'), '7'); assert.equal(VERSION, '2.4.0');
   const review = migrated.get<TicketReview>('SELECT * FROM ticket_reviews'); assert.equal(review, undefined); migrated.close(); rmSync(path, { recursive: true, force: true });
 });
 
@@ -505,7 +505,7 @@ test('upgrading old automatic ballots waits for Start Vote and retains old votes
   assert.equal(migrated.get<TicketReview>('SELECT * FROM ticket_reviews')!.state, 'waiting');
   assert.equal(migrated.get<{ n: number }>('SELECT COUNT(*) n FROM ticket_votes')!.n, 1);
   assert.equal(migrated.meta('username_reminder_started_at'), '123');
-  assert.equal(migrated.meta('schema_version'), '6'); migrated.close(); rmSync(directory, { recursive: true, force: true });
+  assert.equal(migrated.meta('schema_version'), '7'); migrated.close(); rmSync(directory, { recursive: true, force: true });
 });
 
 test('slow delivery in one log channel does not prevent logs reaching another channel', async () => {
@@ -557,7 +557,7 @@ test('public activity, both leaderboard spellings and help respond visibly with 
   }
   assert.equal(lookups, 0);
   for (const definition of commandDefinitions) assert.equal(definition.toJSON().default_member_permissions, null);
-  assert.equal(commandDefinitions.length, 36); f.ctx.db.close();
+  assert.equal(commandDefinitions.length, 37); f.ctx.db.close();
 });
 
 test('privileged slash commands acknowledge before fresh authorization and deny ordinary members', async () => {
@@ -608,8 +608,8 @@ test('custom embed payload preserves outside text and only enables the selected 
   assert.deepEqual(payload.allowedMentions?.parse, []);
   assert.deepEqual(payload.allowedMentions?.roles, [config.nickname.roleId]); assert.deepEqual(payload.allowedMentions?.users, [BOB]);
   const embed = payload.embeds![0] as APIEmbed;
-  assert.equal(embed.title, 'GOAT • Clan News'); assert.equal(embed.description, 'Message in the embed');
-  assert.equal(embed.color, 0xF97316); assert.equal(embed.image?.url, 'https://cdn.discordapp.com/example.png'); assert.match(embed.footer!.text, /GOAT/);
+  assert.equal(embed.title, 'Clan News'); assert.equal(embed.description, 'Message in the embed');
+  assert.equal(embed.color, 0xF97316); assert.equal(embed.image?.url, 'https://cdn.discordapp.com/example.png'); assert.equal(embed.footer, undefined);
   assert.equal(embed.timestamp, undefined);
 });
 

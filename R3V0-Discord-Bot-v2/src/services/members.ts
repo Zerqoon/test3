@@ -7,9 +7,8 @@ import { errorCode, errorText, Mutex } from '../core/util.js';
 
 interface RoleJob { user_id: string; role_id: string; attempts: number; }
 interface Arrival { user_id: string; joined_at: number; requested_at: number; }
-interface TemporaryMessage { message_id: string; channel_id: string; }
 export function usernameReminderText(userId: string): string {
-  return `<@${userId}>, please post your Roblox **@username** here — the name after **@** on your Roblox profile, not your display name. • GOAT`;
+  return `<@${userId}>, please post your Roblox **@username** here — the name after **@** on your Roblox profile, not your display name.`;
 }
 
 export class MemberService {
@@ -31,6 +30,7 @@ export class MemberService {
     let queued = 0;
     for (const member of members) {
       if (member.user.bot) continue;
+      this.ctx.roleReminders.baseline(member);
       const joined = member.joinedTimestamp ?? 0;
       this.ctx.db.run('INSERT OR IGNORE INTO member_arrivals(guild_id,user_id,joined_at,eligible) VALUES(?,?,?,?)',
         this.ctx.guild.id, member.id, joined, joined >= this.cutoff ? 1 : 0);
@@ -123,7 +123,7 @@ export class MemberService {
         for (;;) {
           const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}), cache: false });
           const list = [...page.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp);
-          message = list.find(m => m.author.id === this.ctx.client.user?.id && m.content === text && m.createdTimestamp >= arrival.requested_at - 5000);
+          message = list.find(m => m.author.id === this.ctx.client.user?.id && (m.content === text || m.content === `${text} • GOAT`) && m.createdTimestamp >= arrival.requested_at - 5000);
           if (message || !list.length || list.at(-1)!.createdTimestamp < arrival.requested_at - 5000) break;
           before = list.at(-1)!.id;
         }
@@ -146,6 +146,7 @@ export class MemberService {
     });
   }
   async tick(now = Date.now()): Promise<void> {
+    if (!this.ctx.temporary.active) await this.ctx.temporary.tick(now);
     if (this.busy || this.ctx.stopping) return;
     this.busy = true;
     try {
@@ -157,17 +158,6 @@ export class MemberService {
         } catch (err) {
           this.rescanAt = now + 60000;
           this.ctx.logger.warn({ error: errorText(err) }, 'GOAT full member sync will retry');
-        }
-      }
-      const deletions = this.ctx.db.all<TemporaryMessage>("SELECT * FROM temporary_messages WHERE status='pending' AND delete_at<=? AND retry_at<=? LIMIT 10", now, now);
-      for (const row of deletions) {
-        try {
-          const channel = await this.ctx.guild.channels.fetch(row.channel_id);
-          if (channel?.isTextBased()) await channel.messages.delete(row.message_id);
-          this.ctx.db.run("UPDATE temporary_messages SET status='deleted',error=NULL WHERE message_id=?", row.message_id);
-        } catch (err) {
-          if (errorCode(err) === 10008 || errorCode(err) === 10003) this.ctx.db.run("UPDATE temporary_messages SET status='deleted' WHERE message_id=?", row.message_id);
-          else this.ctx.db.run('UPDATE temporary_messages SET retry_at=?,error=? WHERE message_id=?', now + 30000, errorText(err), row.message_id);
         }
       }
       if (this.ctx.config.autorole.enabled) {

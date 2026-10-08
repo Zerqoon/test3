@@ -175,7 +175,32 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS link_filter_pending ON link_filter_jobs(state,next_attempt);
     `);
-    this.setMeta('schema_version', '6');
+    const filterColumns = this.sqlite.prepare('PRAGMA table_info(link_filter_jobs)').all() as { name: string }[];
+    if (!filterColumns.some(column => column.name === 'kind')) this.sqlite.exec("ALTER TABLE link_filter_jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'link'");
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS member_role_state (
+        guild_id TEXT NOT NULL, user_id TEXT NOT NULL, role_id TEXT NOT NULL,
+        has_role INTEGER NOT NULL, observed_at INTEGER NOT NULL,
+        PRIMARY KEY(guild_id,user_id,role_id)
+      );
+      CREATE TABLE IF NOT EXISTS role_username_dms (
+        guild_id TEXT NOT NULL, user_id TEXT NOT NULL, role_id TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL,
+        message_id TEXT, sent_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0,
+        retry_at INTEGER NOT NULL DEFAULT 0, error TEXT,
+        PRIMARY KEY(guild_id,user_id,role_id)
+      );
+      CREATE INDEX IF NOT EXISTS role_username_dm_pending ON role_username_dms(state,retry_at);
+      CREATE TABLE IF NOT EXISTS filter_notices (
+        message_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, channel_id TEXT NOT NULL,
+        user_id TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, published_id TEXT,
+        published_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0, error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS filter_notice_pending ON filter_notices(state,retry_at);
+      CREATE INDEX IF NOT EXISTS filter_notice_user ON filter_notices(guild_id,channel_id,user_id,created_at);
+    `);
+    this.setMeta('schema_version', '7');
   }
   private statement(sql: string): StatementSync {
     let s = this.statements.get(sql);

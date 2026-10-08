@@ -1,6 +1,6 @@
-# GOAT 2.3 — aktualizacja GitHub + Railway
+# GOAT 2.4 — aktualizacja GitHub + Railway
 
-Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **FIX-GOAT-INSTALL.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.3.0**.
+Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **FIX-GOAT-INSTALL.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.4.0**.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\zerqo\Downloads\FIX-GOAT-INSTALL.ps1"
@@ -10,7 +10,7 @@ Skrypt wybierze najnowszy ZIP, sprawdzi wersję i obecność systemu głosowania
 
 Jeżeli pliki są w innym folderze, podaj pełną ścieżkę skryptu oraz `-ZipPath "pełna ścieżka do ZIP-a"`. Alternatywnie rozpakuj projekt i uruchom dołączony `UPLOAD-GITHUB.ps1` z parametrem `-SourceDirectory` wskazującym folder zawierający `package.json`.
 
-W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.3.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
+W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.4.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
 
 Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployment-actions), [GitHub Autodeploys](https://docs.railway.com/deployments/github-autodeploys), [Keyboard Shortcuts](https://docs.railway.com/overview/keyboard-shortcuts).
 
@@ -25,11 +25,11 @@ Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployme
 | Replicas | `1` |
 | Serverless | Wyłączone |
 
-Baza aktualizuje się automatycznie do schematu 6. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
+Baza aktualizuje się automatycznie do schematu 7. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
 
 ## Nowe logi i filtr linków
 
-Po uruchomieniu sprawdź **2.3.0** w `/goat-status`, następnie użyj **`/message-logs test`**. Ta komenda wysyła jeden test bezpośrednio do **1557439487813091358**. **`/message-logs status`** prywatnie pokaże kanał, uprawnienia, czas ostatniej zaobserwowanej edycji/usunięcia i błąd dostarczenia. Po poprawieniu dostępu **`/message-logs retry`** ponowi zapisane logi.
+Po uruchomieniu sprawdź **2.4.0** w `/goat-status`, następnie użyj **`/message-logs test`**. Ta komenda wysyła jeden test bezpośrednio do **1557439487813091358**. **`/message-logs status`** prywatnie pokaże kanał, uprawnienia, czas ostatniej zaobserwowanej edycji/usunięcia i błąd dostarczenia. Po poprawieniu dostępu **`/message-logs retry`** ponowi zapisane logi.
 
 Logi korzystają z surowych zdarzeń Gateway i bazy, także gdy Discord.js nie ma już wiadomości albo kanału w pamięci. Edycje częściowe zachowują niezmienione załączniki i podglądy. Wiadomości ludzi na kanałach logów również są logowane. Wiadomości botów są oznaczane osobno, aby nie tworzyć pętli. Błędny pojedynczy wpis jest zachowywany do naprawy i nie zatrzymuje pozostałych.
 
@@ -40,12 +40,31 @@ Bot potrzebuje dostępu do kanałów źródłowych, **Manage Messages** do usuwa
 | Zaproszenie `discord.gg` / `discord.com/invite` / `discordapp.com/invite` | Usuwane; wyjątek ma dotychczasowa administracja i Twój zapisany ID |
 | TikTok / YouTube / Roblox, również prawdziwe subdomeny i `youtu.be` | Dozwolone |
 | Inna domena | Usuwana, chyba że dopiszesz domenę w `linkFilter.allowedDomains` |
-| GIF-y Tenor/Giphy, bezpośrednie linki GIF, załączniki GIF i Discord GIF-y | Wymagają administracji albo dodanej roli GIF |
+| Tenor / Giphy / KLIPY — także Klipy clips i static.klipy.com | Dozwolone dla każdego |
+| Inne GIF-y, bezpośrednie pliki GIF i GIF-y z Discorda | Dozwolone na `1557577086351179866`, dla administracji lub dodanej roli GIF |
 | Zwykłe screeny PNG/JPG jako załączniki | Dozwolone |
 
 **Dodawanie rang:** `/link-filter allow-role role:...` — natywny wybór roli. **Usuwanie wyjątku:** `/link-filter remove-role role:...`. **Prywatny podgląd:** `/link-filter status`. Dodatkowe role początkowo są puste; administracja ma wyjątek od razu. Zmiany ról zapisują się w SQLite i pozostają po redeployu. Rola GIF pozwala wysyłać GIF-y także z Discorda i z innych domen, ale nie daje wyjątku dla zaproszeń ani zwykłych linków spoza listy.
 
-Filtr sprawdza nowe wiadomości i edycje, zanim wpis na kanale nicków zostanie przepisany do embeda. Nie przegląda i nie usuwa zbiorowo starej historii. Sam usuwa wiadomość, bez kar i publicznych ostrzeżeń. Jeden czytelny log z powodem i pełną treścią w TXT trafia do **1557439487813091358**. Nieudane usunięcia wracają do kolejki; przed ponowieniem bot sprawdza aktualne role i treść. Podglądy dozwolonych filmów pobierane z CDN Discorda nie są traktowane jak nielegalne linki. Dowolne przekierowania zewnętrznych serwisów nie są otwierane przez bota.
+Filtr sprawdza nowe wiadomości i edycje, zanim wpis na kanale nicków zostanie przepisany do embeda. Nie przegląda i nie usuwa zbiorowo starej historii. Usuwa wiadomość i wysyła krótką angielską informację z pingiem tylko autora. Ostrzeżenie znika po **10 sekundach**. Próby tej samej osoby na tym samym kanale w ciągu 10 sekund nie tworzą kolejnych ostrzeżeń ani nie przedłużają poprzedniego. Kolejka ostrzeżeń i osobny mechanizm usuwania działają również po restarcie; stare niewysłane ostrzeżenia wygasają. Jeden czytelny log z powodem i pełną treścią w TXT trafia do **1557439487813091358**. Nieudane usunięcia wracają do kolejki; przed ponowieniem bot sprawdza aktualne role i treść. Podglądy dozwolonych filmów pobierane z CDN Discorda nie są traktowane jak nielegalne linki. Dowolne przekierowania zewnętrznych serwisów nie są otwierane przez bota.
+
+## Klipy, wyjątek GIF i nowe DM
+
+`1557577086351179866` pozwala na **wszystkie GIF-y**, w tym pliki GIF z Discorda. Blokada zaproszeń i innych zwykłych linków nadal obowiązuje. Poza tym kanałem każdy może używać **Tenor, Giphy i KLIPY**; inne źródła wymagają wyjątku roli. Bot rozpoznaje rzeczywisty adres, także natywny podgląd GIFV. Dozwolony GIF nie przepuszcza dodatkowego GIF-a z zabronionego źródła w tej samej wiadomości.
+
+W `config.json` sekcja `linkFilter` zawiera:
+
+- `allowedDomains`: dozwolone domeny linków;
+- `gifProviderDomains`: źródła GIF-ów/klipów, wspólne dla filtra i logów;
+- `allowApprovedGifs: true`: dozwolone źródła dostępne wszystkim;
+- `unrestrictedGifChannelIds`: kanały bez ograniczeń GIF-ów;
+- `notifications.deleteAfterSeconds: 10`: czas usunięcia ostrzeżenia.
+
+Dodając nowy serwis GIF-ów, wpisz jego właściwą domenę w **`allowedDomains` i `gifProviderDomains`**. Dla KLIPY jest już `klipy.com`; subdomeny, w tym `static.klipy.com`, działają automatycznie.
+
+Od pierwszego uruchomienia **2.4** nowe nadanie roli **1552474081054564402** uruchamia DM z prośbą o Roblox **@username** na **1556640581613260810** oraz przyciskiem otwarcia kanału. Dotyczy to również osób, które były wcześniej na serwerze i dopiero teraz dostają rolę. Osoby posiadające ją już przy uruchomieniu nie otrzymują zbiorowego DM. Kolejka i granica uruchomienia są zapisane w bazie. Jedna osoba dostaje jedno skutecznie zakończone przypomnienie; odebranie i ponowne nadanie roli nie spamuje DM. Wyłączone DM są widoczne prywatnie w `/goat-status`. Bot musi być połączony z Discordem, aby odbierać zdarzenia; zdarzeń nadania roli z długiego okresu offline nie odtwarza z samej listy aktualnych członków.
+
+Dopisek **GOAT •** oraz automatyczna stopka GOAT zostały usunięte z embedów. Dopisek nicku **` | GOAT`** nadal działa. Stare identyfikatory archiwum username pozostają rozpoznawane po aktualizacji.
 
 ## Ticket i głosowanie
 
@@ -104,6 +123,12 @@ Logi grupują do pięciu embedów w jednej wiadomości po około 0,7 sekundy, w 
 
 Zamknięte kanały pozostają tylko do odczytu do czasu użycia Delete. Błąd odczytu rozmowy albo dostarczenia logu blokuje usunięcie. Komendy, przyciski i formularze administracyjne sprawdzają aktualne uprawnienia.
 
+## Czytelniejsze komendy
+
+`/help` ma przyciski **Activity / Tickets / Giveaways / Tools**. Pierwsza wiadomość jest publiczna, a instrukcje kategorii prywatne. Nowa komenda **`/ticket`** grupuje `panel`, `list`, `add`, `remove`, `close`, `start-vote`, `approve`, `reject`, `repair`; stare komendy ticketów również działają. Uprawnienia są nadal sprawdzane przy wykonaniu.
+
+Panel ticketów ma większy baner, dwie czytelne kategorie i wspólny formularz @username. W tickecie widać od razu username, autora, status i osobę obsługującą. Start Vote pozostaje ręczny, a panel głosowania pokazuje liczniki **Yes / No do 3**.
+
 ## Widoczność komend
 
 `/messages`, `/leaderboard` i alias `/leadboard` oraz `/help` są dostępne wszystkim i publikują odpowiedź na kanale. Komendy są rejestrowane bez domyślnego ograniczenia do roli administratora. Działania administracyjne nadal wymagają skonfigurowanego dostępu sprawdzanego przez bota. Jeśli Discord ukrywa komendę na serwerze, sprawdź **Use Application Commands** w uprawnieniach kanału oraz **Server Settings → Integrations → GOAT** i usuń stare ograniczenia odpowiednich komend.
@@ -112,7 +137,7 @@ Zamknięte kanały pozostają tylko do odczytu do czasu użycia Delete. Błąd o
 
 `/embed [channel] [ping-role] [ping-user]` otwiera angielski formularz z tytułem, wiadomością w embedzie, wiadomością poza embedem, adresem HTTPS obrazka i kolorem HEX, np. `#22D3EE`. Kanał domyślny to kanał wywołania komendy. Rola i osoba są opcjonalne, wybierane przez natywne pickery Discorda. Bot automatycznie dopisuje wybrane pingi nad embedem; nie pinguje niewybranych ról, osób ani @everyone wpisanego w tekst. Dostęp działa przez dotychczasowe ustawienia administracji.
 
-Po wysłaniu formularza bot publikuje embed i prywatnie pokazuje link do wiadomości. Przy problemie z wysyłką zachowuje wiadomość w bazie i ponawia próbę, również po restarcie. Powtórzona wysyłka tego samego formularza nie tworzy dodatkowej wiadomości. Rola musi być mentionable albo bot musi mieć uprawnienie Mention Everyone. `/goat-status` pokazuje liczbę oczekujących embedów.
+Embed ma podany tytuł i treść, bez automatycznego dopisku GOAT. Po wysłaniu formularza bot publikuje embed i prywatnie pokazuje link do wiadomości. Przy problemie z wysyłką zachowuje wiadomość w bazie i ponawia próbę, również po restarcie. Powtórzona wysyłka tego samego formularza nie tworzy dodatkowej wiadomości. Rola musi być mentionable albo bot musi mieć uprawnienie Mention Everyone. `/goat-status` pokazuje liczbę oczekujących embedów.
 
 ## Pozostałe systemy
 

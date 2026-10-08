@@ -18,7 +18,7 @@ const targetReason = (name: string, description: string) => new SlashCommandBuil
 // Commands remain visible so the configured owner can invoke them without any role.
 // Every privileged command, modal and button is guarded again at runtime.
 export const commandDefinitions = [
-  new SlashCommandBuilder().setName('embed').setDescription('Create a GOAT embed with optional outside text and a selected ping')
+  new SlashCommandBuilder().setName('embed').setDescription('Create an embed with outside text, an image, color and optional selected ping')
     .addChannelOption(option => option.setName('channel').setDescription('Where to send it (default: this channel)').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
     .addRoleOption(option => option.setName('ping-role').setDescription('Optional role to mention'))
     .addUserOption(option => option.setName('ping-user').setDescription('Optional person to mention')),
@@ -55,6 +55,21 @@ export const commandDefinitions = [
     .addStringOption(o => o.setName('reason').setDescription('Reason recorded in the GOAT log').setRequired(true).setMaxLength(1000)),
   new SlashCommandBuilder().setName('nickname-sync').setDescription('Refresh GOAT clan nickname tags'),
   new SlashCommandBuilder().setName('autorole-sync').setDescription('Assign the GOAT member role to existing human members'),
+  new SlashCommandBuilder().setName('ticket').setDescription('Manage applications and support tickets')
+    .addSubcommand(s => s.setName('panel').setDescription('Publish or refresh the ticket panel'))
+    .addSubcommand(s => s.setName('list').setDescription('View recent tickets and their status'))
+    .addSubcommand(s => s.setName('add').setDescription('Add a person to this ticket')
+      .addUserOption(o => o.setName('user').setDescription('Person to add').setRequired(true)))
+    .addSubcommand(s => s.setName('remove').setDescription('Remove a participant from this ticket')
+      .addUserOption(o => o.setName('user').setDescription('Person to remove').setRequired(true)))
+    .addSubcommand(s => s.setName('close').setDescription('Close this ticket and save the conversation')
+      .addStringOption(o => o.setName('reason').setDescription('Closing reason').setRequired(true).setMaxLength(1000)))
+    .addSubcommand(s => s.setName('start-vote').setDescription('Start the 3-minute application vote'))
+    .addSubcommand(s => s.setName('approve').setDescription('Accept this application and notify the applicant')
+      .addStringOption(o => o.setName('reason').setDescription('Reason included in the applicant DM').setRequired(true).setMaxLength(1000)))
+    .addSubcommand(s => s.setName('reject').setDescription('Reject this application and notify the applicant')
+      .addStringOption(o => o.setName('reason').setDescription('Reason included in the applicant DM').setRequired(true).setMaxLength(1000)))
+    .addSubcommand(s => s.setName('repair').setDescription('Restore ticket privacy permissions')),
   new SlashCommandBuilder().setName('ticket-panel').setDescription('Publish or repair the GOAT ticket panel'),
   new SlashCommandBuilder().setName('ticket-list').setDescription('Show recent GOAT tickets'),
   new SlashCommandBuilder().setName('ticket-add').setDescription('Add a member to the current GOAT ticket')
@@ -73,12 +88,12 @@ export const commandDefinitions = [
     .addSubcommand(s => s.setName('status').setDescription('Check the message log destination, permissions and Gateway events'))
     .addSubcommand(s => s.setName('test').setDescription('Send one delivery test to the configured message log channel'))
     .addSubcommand(s => s.setName('retry').setDescription('Retry saved message logs after repairing permissions')),
-  new SlashCommandBuilder().setName('link-filter').setDescription('Manage approved GOAT GIF roles')
-    .addSubcommand(s => s.setName('status').setDescription('Show the link filter and approved GIF roles'))
-    .addSubcommand(s => s.setName('allow-role').setDescription('Allow a role to send GIFs; invite links remain restricted')
-      .addRoleOption(o => o.setName('role').setDescription('Role allowed to send GIFs').setRequired(true)))
+  new SlashCommandBuilder().setName('link-filter').setDescription('Inspect link rules, approved GIF providers and exceptions')
+    .addSubcommand(s => s.setName('status').setDescription('Show approved providers, GIF channels, role exceptions and queues'))
+    .addSubcommand(s => s.setName('allow-role').setDescription('Allow a role to send GIFs from any source; invites remain restricted')
+      .addRoleOption(o => o.setName('role').setDescription('Role allowed to send any GIF').setRequired(true)))
     .addSubcommand(s => s.setName('remove-role').setDescription('Remove the GIF exception from a role')
       .addRoleOption(o => o.setName('role').setDescription('Role to remove from the GIF exceptions').setRequired(true))),
-  new SlashCommandBuilder().setName('help').setDescription('Show GOAT commands')
+  new SlashCommandBuilder().setName('help').setDescription('Browse commands and instructions by category')
 ].map(command => command.setDefaultMemberPermissions(null));
 export const publicCommands = new Set(['messages', 'leaderboard', 'leadboard', 'help']);

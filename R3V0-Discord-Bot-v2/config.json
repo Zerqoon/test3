@@ -80,12 +80,32 @@
       "giphy.com",
       "gph.is",
       "tenor.com",
+      "klipy.com",
       "tiktok.com",
       "youtube.com",
       "youtu.be",
-      "roblox.com",
+      "roblox.com"
+    ],
+    "gifAllowedRoleIds": [],
+    "allowApprovedGifs": true,
+    "gifProviderDomains": [
+      "tenor.com",
+      "giphy.com",
+      "gph.is",
       "klipy.com"
     ],
-    "gifAllowedRoleIds": []
+    "unrestrictedGifChannelIds": [
+      "1557577086351179866"
+    ],
+    "notifications": {
+      "enabled": true,
+      "deleteAfterSeconds": 10,
+      "cooldownSeconds": 10,
+      "maxDelaySeconds": 60
+    }
+  },
+  "roleUsernameDm": {
+    "enabled": true,
+    "roleId": "1552474081054564402"
   }
 }

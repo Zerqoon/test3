@@ -15,6 +15,9 @@ import { EmbedService } from '../src/services/custom-embeds.js';
 import { LinkFilterService } from '../src/services/link-filter.js';
 import { UsernameService } from '../src/services/usernames.js';
 import { HistoryService } from '../src/services/history.js';
+import { RoleReminderService } from '../src/services/role-reminders.js';
+import { FilterNoticeService } from '../src/services/filter-notices.js';
+import { TemporaryMessageService } from '../src/services/temporary-messages.js';
 
 export const GUILD = '1550000000000000100', ALICE = '1550000000000000101', BOB = '1550000000000000102',
   BOT = '1550000000000000103', STAFF = '1550000000000000104';
@@ -24,9 +27,10 @@ export const json = <T>(value: T): T => (value && typeof value === 'object' && '
 
 export function fixture(options: { filter?: boolean } = {}) {
   const db = new Store(':memory:'); const settings = structuredClone(config); settings.logging.batchWindowMs = 0; settings.linkFilter.enabled = options.filter ?? false;
-  const ctx = { db, config: settings, logger: pino({ level: 'silent' }), stopping: false,
+  const ctx = { db, config: settings, logger: pino({ level: 'silent' }), stopping: false, startedAt: Date.now(),
     client: Object.assign(new EventEmitter(), { user: { id: BOT }, options: { intents: new IntentsBitField([GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]) }, ws: { ping: 0 }, users: { fetch: async (id: string) => ({ send: async (payload: MessageCreateOptions) => {
       if (dmError !== undefined) throw Object.assign(new Error('DM failure'), { code: dmError }); dms.push({ userId: id, payload });
+      return { id: String(++serial) };
     } }) } }) } as unknown as Context;
   const members = new Collection<string, GuildMember>(); const channels = new Collection<string, ReturnType<typeof makeChannel>>();
   const sent: { channelId: string; payload: MessageCreateOptions }[] = [], roleAdds: string[] = [], deletes: string[] = [];
@@ -34,7 +38,7 @@ export function fixture(options: { filter?: boolean } = {}) {
   let serial = 1550000000000100000n, failSend = false, failHistory = false, rolePosition = 1, failPermissions = false;
   function addMember(id: string, roles: string[] = [], bot = false, joined = Date.now() - 86400000) {
     const cache = new Collection(roles.map(role => [role, { id: role }]));
-    const member = { id, joinedTimestamp: joined, displayName: id === ALICE ? 'Stormy' : 'GOAT Member', displayAvatarURL: avatar,
+    const member = { id, guild: ctx.guild, partial: false, joinedTimestamp: joined, displayName: id === ALICE ? 'Stormy' : 'GOAT Member', displayAvatarURL: avatar,
       user: { id, bot, createdTimestamp: Date.now() - 365 * 86400000, username: `user_${id}`, displayName: 'GOAT Member', displayAvatarURL: avatar },
       permissions: new PermissionsBitField(), roles: { cache, add: async (role: string) => { roleAdds.push(id); cache.set(role, { id: role }); return member; } }
     } as unknown as GuildMember;
@@ -57,7 +61,7 @@ export function fixture(options: { filter?: boolean } = {}) {
           const value = json(row) as { components?: { custom_id?: string }[] };
           return { components: (value.components ?? []).map(component => ({ customId: component.custom_id })) };
         });
-        const message = { id: messageId, guildId: GUILD, channelId: id, webhookId: null,
+        const message = { id: messageId, guildId: GUILD, channelId: id, webhookId: null, nonce: payload.nonce ?? null,
           createdTimestamp: Date.now(), editedTimestamp: null, content: payload.content ?? '',
           author: members.get(BOT)!.user, member: members.get(BOT), attachments: new Collection(), stickers: new Collection(),
           embeds: (payload.embeds ?? []).map(embed => ({ ...json(embed), toJSON: () => json(embed) })), components: rowComponents,
@@ -106,7 +110,8 @@ export function fixture(options: { filter?: boolean } = {}) {
   ctx.guild = guild as unknown as Context['guild'];
   addMember(ALICE); addMember(BOB); addMember(BOT, [], true); addMember(STAFF, [settings.access.staffRoleIds[0]]);
   addMember(settings.access.ownerUserIds[0]);
-  for (const id of [settings.channels.logs, settings.channels.usernames, settings.channels.messageLogs, settings.channels.memberLogs, settings.tickets.logChannelId, settings.tickets.panelChannelId, settings.tickets.voting.channelId]) makeChannel(id);
+  for (const id of [settings.channels.logs, settings.channels.usernames, settings.channels.messageLogs, settings.channels.memberLogs, settings.tickets.logChannelId, settings.tickets.panelChannelId, settings.tickets.voting.channelId, ...settings.linkFilter.unrestrictedGifChannelIds]) makeChannel(id);
+  ctx.roleReminders = new RoleReminderService(ctx); ctx.temporary = new TemporaryMessageService(ctx); ctx.filterNotices = new FilterNoticeService(ctx);
   ctx.logs = new LogService(ctx); ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx);
   ctx.audit = new AuditService(ctx); ctx.giveaways = new GiveawayService(ctx); ctx.embeds = new EmbedService(ctx);
   ctx.linkFilter = new LinkFilterService(ctx); ctx.usernames = new UsernameService(ctx); ctx.history = new HistoryService(ctx);

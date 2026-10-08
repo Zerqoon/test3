@@ -13,6 +13,9 @@ import type { MemberService } from '../services/members.js';
 import type { TicketService } from '../services/tickets.js';
 import type { EmbedService } from '../services/custom-embeds.js';
 import type { LinkFilterService } from '../services/link-filter.js';
+import type { RoleReminderService } from '../services/role-reminders.js';
+import type { FilterNoticeService } from '../services/filter-notices.js';
+import type { TemporaryMessageService } from '../services/temporary-messages.js';
 
 export interface AttachmentSnapshot { id: string; url: string; name: string; size: number; contentType: string | null; }
 export interface MessageSnapshot {
@@ -29,5 +32,6 @@ export interface Context {
   members: MemberService; tickets: TicketService;
   embeds: EmbedService;
   linkFilter: LinkFilterService;
+  roleReminders: RoleReminderService; filterNotices: FilterNoticeService; temporary: TemporaryMessageService;
   startedAt: number; stopping: boolean;
 }

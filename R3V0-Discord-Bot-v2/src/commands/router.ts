@@ -139,7 +139,7 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
     case 'welcome-preview': {
       const member = await ctx.guild.members.fetch(i.user.id);
       let avatar: Buffer | undefined;
-      try { const r = await fetch(member.displayAvatarURL({ extension: 'png', size: 256 }), { signal: AbortSignal.timeout(8000) }); if (r.ok) avatar = Buffer.from(await r.arrayBuffer()); } catch { /* Use the GOAT fallback avatar. */ }
+      try { const r = await fetch(member.displayAvatarURL({ extension: 'png', size: 512 }), { signal: AbortSignal.timeout(8000) }); if (r.ok) avatar = Buffer.from(await r.arrayBuffer()); } catch { /* Use the GOAT fallback avatar. */ }
       await i.editReply({ embeds: [goatEmbed('Welcome Preview').setImage('attachment://goat-welcome.png')],
         files: [new AttachmentBuilder(await renderWelcome(member.displayName, ctx.guild.memberCount, avatar), { name: 'goat-welcome.png' })], allowedMentions: noMentions }); return;
     }

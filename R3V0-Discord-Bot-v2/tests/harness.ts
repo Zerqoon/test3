@@ -18,6 +18,8 @@ import { HistoryService } from '../src/services/history.js';
 import { RoleReminderService } from '../src/services/role-reminders.js';
 import { FilterNoticeService } from '../src/services/filter-notices.js';
 import { TemporaryMessageService } from '../src/services/temporary-messages.js';
+import { BoostService } from '../src/services/boosts.js';
+import { RulesService } from '../src/services/rules.js';
 
 export const GUILD = '1550000000000000100', ALICE = '1550000000000000101', BOB = '1550000000000000102',
   BOT = '1550000000000000103', STAFF = '1550000000000000104';
@@ -27,6 +29,8 @@ export const json = <T>(value: T): T => (value && typeof value === 'object' && '
 
 export function fixture(options: { filter?: boolean } = {}) {
   const db = new Store(':memory:'); const settings = structuredClone(config); settings.logging.batchWindowMs = 0; settings.linkFilter.enabled = options.filter ?? false;
+  // Existing ticket tests do not depend on the real clock; dedicated schedule tests enable it.
+  settings.tickets.supportHours.enabled = false;
   const ctx = { db, config: settings, logger: pino({ level: 'silent' }), stopping: false, startedAt: Date.now(),
     client: Object.assign(new EventEmitter(), { user: { id: BOT }, options: { intents: new IntentsBitField([GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]) }, ws: { ping: 0 }, users: { fetch: async (id: string) => ({ send: async (payload: MessageCreateOptions) => {
       if (dmError !== undefined) throw Object.assign(new Error('DM failure'), { code: dmError }); dms.push({ userId: id, payload });
@@ -39,6 +43,7 @@ export function fixture(options: { filter?: boolean } = {}) {
   function addMember(id: string, roles: string[] = [], bot = false, joined = Date.now() - 86400000) {
     const cache = new Collection(roles.map(role => [role, { id: role }]));
     const member = { id, guild: ctx.guild, partial: false, joinedTimestamp: joined, displayName: id === ALICE ? 'Stormy' : 'GOAT Member', displayAvatarURL: avatar,
+      premiumSinceTimestamp: null,
       user: { id, bot, createdTimestamp: Date.now() - 365 * 86400000, username: `user_${id}`, displayName: 'GOAT Member', displayAvatarURL: avatar },
       permissions: new PermissionsBitField(), roles: { cache, add: async (role: string) => { roleAdds.push(id); cache.set(role, { id: role }); return member; } }
     } as unknown as GuildMember;
@@ -110,9 +115,10 @@ export function fixture(options: { filter?: boolean } = {}) {
   ctx.guild = guild as unknown as Context['guild'];
   addMember(ALICE); addMember(BOB); addMember(BOT, [], true); addMember(STAFF, [settings.access.staffRoleIds[0]]);
   addMember(settings.access.ownerUserIds[0]);
-  for (const id of [settings.channels.logs, settings.channels.usernames, settings.channels.messageLogs, settings.channels.memberLogs, settings.tickets.logChannelId, settings.tickets.panelChannelId, settings.tickets.voting.channelId, ...settings.linkFilter.unrestrictedGifChannelIds]) makeChannel(id);
+  for (const id of [settings.channels.logs, settings.channels.usernames, settings.channels.messageLogs, settings.channels.memberLogs, settings.tickets.logChannelId, settings.tickets.panelChannelId, settings.tickets.voting.channelId, settings.rules.channelId, settings.boosts.channelId, ...settings.linkFilter.unrestrictedGifChannelIds]) makeChannel(id);
   ctx.roleReminders = new RoleReminderService(ctx); ctx.temporary = new TemporaryMessageService(ctx); ctx.filterNotices = new FilterNoticeService(ctx);
   ctx.logs = new LogService(ctx); ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx);
+  ctx.boosts = new BoostService(ctx); ctx.rules = new RulesService(ctx);
   ctx.audit = new AuditService(ctx); ctx.giveaways = new GiveawayService(ctx); ctx.embeds = new EmbedService(ctx);
   ctx.linkFilter = new LinkFilterService(ctx); ctx.usernames = new UsernameService(ctx); ctx.history = new HistoryService(ctx);
   function interaction(userId = ALICE, channelId = settings.tickets.panelChannelId, messageId = db.meta('ticket_panel_message_id')) {

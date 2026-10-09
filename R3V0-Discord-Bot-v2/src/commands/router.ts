@@ -10,6 +10,7 @@ import type { GiveawayRow } from '../services/giveaways.js';
 import type { CaseRow } from '../services/moderation.js';
 import type { TicketRow } from '../services/tickets.js';
 import { helpPanel } from './help.js';
+import { boostEmbed } from '../services/boosts.js';
 
 function coverage(ctx: Context): string {
   const s = ctx.history.summary();
@@ -96,9 +97,30 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
       const updated = await ctx.tickets.setIntake(name === 'clan-off' ? null : i.options.getInteger('count', true), i.user.id);
       const status = ctx.tickets.intake.status();
       await reply(name === 'clan-off' ? 'Clan Recruitment Closed' : 'Clan Recruitment Opened',
-        (name === 'clan-off' ? 'New clan applications are paused. The Clan Application button displays **20/20** and is disabled.' : `**${status.available} free places**. The Clan Application button displays **${status.displayUsed}/20**.`) +
-        '\nExisting tickets and Support remain available.' + (updated ? '' : '\nThe setting is saved. The panel could not be updated yet; automatic retry is queued.'));
+        (name === 'clan-off' ? 'New clan applications are paused. The Clan Application button is removed and the panel shows **Recruitment Closed**.' : `**${status.available} free places**. The Clan Application button displays **${status.displayUsed}/20**.`) +
+        '\nExisting conversations remain available. New Support tickets follow daily opening hours.' + (updated ? '' : '\nThe setting is saved. The panel could not be updated yet; automatic retry is queued.'));
       return;
+    }
+    case 'support-open': {
+      const user = i.options.getUser('user', true);
+      const result = await ctx.tickets.openSupportFor(user.id, i.user.id, reason(i), i.options.getString('username') ?? undefined);
+      await reply(result.created ? 'Support Ticket Opened' : 'Existing Ticket',
+        `${result.created ? 'Staff exception created' : 'This member already has an active ticket'}: <#${result.ticket.channel_id}>\nMember: <@${user.id}>${result.created ? '\nDaily opening hours and the member cooldown were bypassed for this ticket.' : '\nContinue in the existing conversation.'}`);
+      return;
+    }
+    case 'rules-refresh': await reply('Community Rules', `[Open rules](${await ctx.rules.ensure(true)}).`); return;
+    case 'boost-preview': await i.editReply({ embeds: [boostEmbed(i.options.getUser('user') ?? i.user)], allowedMentions: noMentions }); return;
+    case 'ticket-reopen': {
+      const id = i.options.getInteger('id') ?? ctx.tickets.fromChannel(i.channelId)?.id;
+      if (!id) throw new UserError('Use this command inside a GOAT ticket or provide its ID.');
+      await ctx.tickets.reopen(id, i.user.id);
+      await reply('Ticket Reopened', `The conversation is open again: <#${ctx.tickets.get(id).channel_id}>.`); return;
+    }
+    case 'ticket-delete': {
+      if (i.options.getBoolean('confirm', true) !== true) throw new UserError('Select confirm:True to delete this closed ticket.');
+      const id = i.options.getInteger('id') ?? ctx.tickets.fromChannel(i.channelId)?.id;
+      if (!id) throw new UserError('Use this command inside a GOAT ticket or provide its ID.');
+      await ctx.tickets.deleteClosed(id, i.user.id, () => reply('Ticket', 'Transcript delivered. Deleting the closed ticket channel.')); return;
     }
     case 'clan-status': {
       const status = ctx.tickets.intake.status();
@@ -151,11 +173,15 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
       const embeds = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM custom_embeds WHERE guild_id=? AND state='publishing'", ctx.guild.id)!.n;
       const dm = ctx.roleReminders.counts();
       const intake = ctx.tickets.intake.status();
+      const support = ctx.tickets.supportStatus();
       await i.editReply({ embeds: [goatEmbed('System Status', colors.green).addFields({ name: 'Version', value: VERSION, inline: true }, { name: 'Uptime', value: humanDuration(Date.now() - ctx.startedAt), inline: true },
         { name: 'Gateway', value: `${ctx.client.ws.ping} ms`, inline: true }, { name: 'Queued Logs', value: String(ctx.logs.pending()), inline: true },
         { name: 'Username Jobs', value: String(pending), inline: true }, { name: 'Live Giveaways', value: String(live), inline: true },
         { name: 'Active Tickets', value: String(tickets), inline: true }, { name: 'Autorole Queue', value: String(roles), inline: true },
         { name: 'Clan Recruitment', value: `${intake.accepting ? 'Open' : intake.enabled ? 'Full' : 'Paused'} · ${intake.available} free · ${intake.reserved} applications`, inline: true },
+        { name: 'Support Opening', value: `${support.open ? 'Open' : 'Closed'} · ${support.hours}\n${support.timezone}`, inline: true },
+        { name: 'Community Rules', value: ctx.config.rules.enabled ? `<#${ctx.config.rules.channelId}>${ctx.db.meta('rules_message_id') ? ' · Published' : ' · Waiting'}` : 'Disabled', inline: true },
+        { name: 'Boost Thanks', value: ctx.config.boosts.enabled ? `<#${ctx.config.boosts.channelId}>` : 'Disabled', inline: true },
         { name: 'Embed Queue', value: String(embeds), inline: true },
         { name: 'Link Filter Queue', value: String(ctx.linkFilter.pending()), inline: true },
         { name: 'Role Username DMs', value: `${dm.pending} queued · ${dm.sent} sent · ${dm.closed} DMs disabled` },

@@ -17,6 +17,8 @@ import type { RoleReminderService } from '../services/role-reminders.js';
 import type { FilterNoticeService } from '../services/filter-notices.js';
 import type { TemporaryMessageService } from '../services/temporary-messages.js';
 import type { ValueService } from '../services/values.js';
+import type { BoostService } from '../services/boosts.js';
+import type { RulesService } from '../services/rules.js';
 
 export interface AttachmentSnapshot { id: string; url: string; name: string; size: number; contentType: string | null; }
 export interface MessageSnapshot {
@@ -35,5 +37,6 @@ export interface Context {
   linkFilter: LinkFilterService;
   roleReminders: RoleReminderService; filterNotices: FilterNoticeService; temporary: TemporaryMessageService;
   values: ValueService;
+  boosts: BoostService; rules: RulesService;
   startedAt: number; stopping: boolean;
 }

@@ -31,7 +31,7 @@ export class ClanIntakeService {
     const used = row.occupied + reserved;
     const available = Math.max(0, CLAN_CAPACITY - used);
     return { capacity: CLAN_CAPACITY, enabled: !!row.enabled, occupied: row.occupied, reserved, used, available,
-      displayUsed: row.enabled ? Math.min(CLAN_CAPACITY, used) : CLAN_CAPACITY, accepting: !!row.enabled && available > 0,
+      displayUsed: Math.min(CLAN_CAPACITY, used), accepting: !!row.enabled && available > 0,
       revision: row.revision, updatedAt: row.updated_at, updatedBy: row.updated_by };
   }
   assertMember(member: GuildMember): void {
@@ -41,7 +41,7 @@ export class ClanIntakeService {
   }
   assertAvailable(): void {
     const status = this.status();
-    if (!status.enabled) throw new UserError('Clan applications are currently closed. Support is still available.');
+    if (!status.enabled) throw new UserError('Clan applications are currently closed. Support follows its daily opening hours.');
     if (!status.available) throw new UserError('The clan is full: 20/20 places are occupied or reserved. Please try again when a place opens.');
   }
   close(actorId: string): ClanIntakeStatus {

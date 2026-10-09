@@ -21,7 +21,7 @@ Bot wymaga Node.js co najmniej 24.15.0 jak dotychczas. Lokalnie użyj istniejąc
 również dołączone. Nie dodano nowych zależności npm.
 
 `autoRegisterCommands` zachowuje dotychczasowe ustawienie. Gdy jest włączone,
-restart zarejestruje listę 41 komend wraz z `/value`. Przy ręcznej rejestracji
+restart zarejestruje listę 44 komend wraz z `/value`. Przy ręcznej rejestracji
 uruchom `npm run register` z istniejącymi DISCORD_TOKEN, APPLICATION_ID i GUILD_ID.
 Rejestracja zawiera wszystkie dotychczasowe komendy.
 

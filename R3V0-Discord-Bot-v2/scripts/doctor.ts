@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { assertPersistentDatabase, config, env } from '../src/core/config.js';
 import { commandDefinitions } from '../src/commands/definitions.js';
 import { VERSION } from '../src/core/version.js';
+import { supportAvailability } from '../src/services/support-hours.js';
 console.log('GOAT • Local diagnostics');
 console.log(`Version: ${VERSION}`);
 console.log(`Node.js: ${process.version}`);
@@ -19,6 +20,10 @@ console.log(`Approved GIFs: ${config.linkFilter.allowApprovedGifs ? 'everyone' :
 console.log(`Unrestricted GIF channels: ${config.linkFilter.unrestrictedGifChannelIds.join(', ')}`);
 console.log(`GIF restriction roles (override exceptions): ${config.linkFilter.gifBlockedRoleIds.join(', ')}`);
 console.log(`Clan capacity: 20; blacklist: ${config.tickets.clanBlacklistRoleIds.join(', ')}; commands: /clan-off, /open-ticket count, /clan-status`);
+const support = supportAvailability(config.tickets.supportHours, config.timezone);
+console.log(`Support: ${support.hours} (${support.timezone}); currently ${support.open ? 'open' : 'closed'}; staff exception: /support-open`);
+console.log(`Boost thank-you: ${config.boosts.enabled ? config.boosts.channelId : 'disabled'}; private preview: /boost-preview`);
+console.log(`English rules: ${config.rules.enabled ? config.rules.channelId : 'disabled'}; refresh: /rules-refresh`);
 console.log(`Filter warnings: ${config.linkFilter.notifications.enabled ? 'enabled' : 'disabled'}; delete after ${config.linkFilter.notifications.deleteAfterSeconds}s`);
 console.log(`New role username DMs: ${config.roleUsernameDm.enabled ? 'enabled' : 'disabled'}; initial holders are not notified`);
 console.log(`Banner: ${existsSync('assets/goat-banner.png') ? 'OK' : 'MISSING'}`);

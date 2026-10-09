@@ -25,9 +25,15 @@ export function installEvents(ctx: Context): void {
     try { messages.raw(packet); ctx.roleReminders.raw(packet); }
     catch (err) { ctx.logger.error({ event: 'rawMessages', error: errorText(err) }, 'GOAT raw message handler failed'); }
   });
-  client.on(Events.MessageCreate, message => protect('messageCreate', () => messages.created(message)));
+  client.on(Events.MessageCreate, message => protect('messageCreate', async () => {
+    ctx.boosts.message(message);
+    await messages.created(message);
+  }));
   client.on(Events.MessageUpdate, (before, after) => protect('messageUpdate', () => messages.updated(before, after)));
-  client.on(Events.MessageDelete, message => protect('messageDelete', () => messages.deletedMessage(message)));
+  client.on(Events.MessageDelete, message => protect('messageDelete', async () => {
+    ctx.rules.messageDeleted(message.id);
+    await messages.deletedMessage(message);
+  }));
   client.on(Events.MessageBulkDelete, (deleted, channel) => protect('messageDeleteBulk', () => {
     if (channel.guild.id === ctx.guild.id) messages.bulkMessages(channel.id, deleted.values());
   }));
@@ -64,6 +70,7 @@ export function installEvents(ctx: Context): void {
     if (after.guild.id !== ctx.guild.id) return;
     ctx.members.observe(after);
     ctx.roleReminders.transition(before, after);
+    ctx.boosts.transition(before, after);
     const added = [...after.roles.cache.keys()].filter(id => !before.roles.cache.has(id));
     const removed = [...before.roles.cache.keys()].filter(id => !after.roles.cache.has(id));
     if (added.length || removed.length) {

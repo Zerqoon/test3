@@ -1,4 +1,4 @@
-# Windows PowerShell 5.1 / PowerShell 7.
+﻿# Windows PowerShell 5.1 / PowerShell 7.
 # Reads the complete GOAT ZIP, updates the local project and uploads the ZIP source.
 [CmdletBinding()]
 param(
@@ -20,12 +20,12 @@ if ([string]::IsNullOrWhiteSpace($ZipPath)) {
     $zipCandidates = @()
     foreach ($directory in $downloadDirectories) {
         if (Test-Path -LiteralPath $directory -PathType Container) {
-            $zipCandidates += Get-ChildItem -LiteralPath $directory -Filter 'GOAT-Clan-Bot-v2-Tickets*.zip' -File
+            $zipCandidates += Get-ChildItem -LiteralPath $directory -Filter 'GOAT-Clan-Bot-*.zip' -File
         }
     }
     $selectedZip = $zipCandidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $selectedZip) {
-        throw 'Download GOAT-Clan-Bot-v2-Tickets.zip first, or run this script with -ZipPath and the full ZIP path.'
+        throw 'Download GOAT-Clan-Bot-Value-API-Community.zip first, or run this script with -ZipPath and the full ZIP path.'
     }
     $ZipPath = $selectedZip.FullName
 }
@@ -41,15 +41,15 @@ $completed = $false
 try {
     Write-Host ('Reading ZIP: ' + $ZipPath) -ForegroundColor Cyan
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $extractedDirectory -Force
-    foreach ($required in @('package.json', 'config.json', 'UPLOAD-GITHUB.ps1', 'src/services/tickets.ts', 'src/services/ticket-votes.ts', 'src/services/clan-intake.ts', 'src/services/message-events.ts', 'src/services/link-filter.ts', 'src/services/role-reminders.ts', 'src/services/filter-notices.ts', 'src/services/temporary-messages.ts', 'src/services/custom-embeds.ts', 'assets/application-mastery-example.png')) {
+    foreach ($required in @('package.json', 'config.json', 'UPLOAD-GITHUB.ps1', 'src/services/tickets.ts', 'src/services/ticket-votes.ts', 'src/services/clan-intake.ts', 'src/services/support-hours.ts', 'src/services/boosts.ts', 'src/services/rules.ts', 'src/services/values.ts', 'src/services/message-events.ts', 'src/services/link-filter.ts', 'src/services/role-reminders.ts', 'src/services/filter-notices.ts', 'src/services/temporary-messages.ts', 'src/services/custom-embeds.ts', 'assets/application-mastery-example.png')) {
         if (-not (Test-Path -LiteralPath (Join-Path $source $required))) {
             throw "Wrong or incomplete ZIP: missing $required. Download the latest complete GOAT project."
         }
     }
     $manifest = Get-Content -LiteralPath (Join-Path $source 'package.json') -Raw | ConvertFrom-Json
     $goatVersion = [version]([string]$manifest.version)
-    if ($goatVersion -lt [version]'2.5.0' -or $goatVersion.Major -ne 2) { throw 'Download the latest GOAT 2.5 project ZIP.' }
-    Write-Host ('Verified ZIP source: GOAT ' + $manifest.version + ' with recruitment controls, blacklist restrictions and tickets.') -ForegroundColor Green
+    if ($goatVersion -lt [version]'2.6.0' -or $goatVersion.Major -ne 2) { throw 'Download the latest GOAT 2.6 project ZIP.' }
+    Write-Host ('Verified ZIP source: GOAT ' + $manifest.version + ' with Support hours, staff exceptions, boost messages, rules and Value API.') -ForegroundColor Green
 
     New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
     & robocopy $source $DestinationDirectory /E /R:2 /W:1 /XJ /NFL /NDL /NJH /NJS `

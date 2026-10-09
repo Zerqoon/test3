@@ -70,6 +70,11 @@ export const commandDefinitions = [
       .addUserOption(o => o.setName('user').setDescription('Person to remove').setRequired(true)))
     .addSubcommand(s => s.setName('close').setDescription('Close this ticket and save the conversation')
       .addStringOption(o => o.setName('reason').setDescription('Closing reason').setRequired(true).setMaxLength(1000)))
+    .addSubcommand(s => s.setName('reopen').setDescription('Reopen a closed ticket as staff, including outside Support hours')
+      .addIntegerOption(o => o.setName('id').setDescription('Ticket number; default: this channel').setMinValue(1)))
+    .addSubcommand(s => s.setName('delete').setDescription('Delete a closed ticket after its transcript has been delivered')
+      .addBooleanOption(o => o.setName('confirm').setDescription('Select True to confirm deleting the closed channel').setRequired(true))
+      .addIntegerOption(o => o.setName('id').setDescription('Ticket number; default: this channel').setMinValue(1)))
     .addSubcommand(s => s.setName('start-vote').setDescription('Start the 3-minute application vote'))
     .addSubcommand(s => s.setName('approve').setDescription('Accept this application and notify the applicant')
       .addStringOption(o => o.setName('reason').setDescription('Reason included in the applicant DM').setRequired(true).setMaxLength(1000)))
@@ -77,7 +82,14 @@ export const commandDefinitions = [
       .addStringOption(o => o.setName('reason').setDescription('Reason included in the applicant DM').setRequired(true).setMaxLength(1000)))
     .addSubcommand(s => s.setName('repair').setDescription('Restore ticket privacy permissions')),
   new SlashCommandBuilder().setName('ticket-panel').setDescription('Publish or repair the GOAT ticket panel'),
-  new SlashCommandBuilder().setName('clan-off').setDescription('Pause new clan applications and disable the 20/20 button'),
+  new SlashCommandBuilder().setName('clan-off').setDescription('Pause new clan applications and remove the application button'),
+  new SlashCommandBuilder().setName('support-open').setDescription('Staff: open a private Support ticket for a member, even outside opening hours')
+    .addUserOption(o => o.setName('user').setDescription('Member who needs help').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Why staff are opening this ticket; included in the ticket and log').setRequired(true).setMinLength(1).setMaxLength(1000))
+    .addStringOption(o => o.setName('username').setDescription('Optional Roblox @username for this member').setMinLength(3).setMaxLength(21)),
+  new SlashCommandBuilder().setName('rules-refresh').setDescription('Publish or refresh the English community rules in the configured channel'),
+  new SlashCommandBuilder().setName('boost-preview').setDescription('Privately preview the server boost thank-you embed')
+    .addUserOption(o => o.setName('user').setDescription('Member shown in the preview; default: yourself')),
   new SlashCommandBuilder().setName('open-ticket').setDescription('Reopen clan recruitment with a chosen number of free places')
     .addIntegerOption(o => o.setName('count').setDescription('Free places out of 20; existing applications already reserve places').setRequired(true).setMinValue(1).setMaxValue(20)),
   new SlashCommandBuilder().setName('clan-status').setDescription('View free clan places, occupied places and reserved applications'),

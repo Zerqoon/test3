@@ -73,7 +73,12 @@
     },
     "clanBlacklistRoleIds": [
       "1557809384166391918"
-    ]
+    ],
+    "supportHours": {
+      "enabled": true,
+      "startHour": 15,
+      "endHour": 22
+    }
   },
   "autoRegisterCommands": true,
   "linkFilter": {
@@ -118,5 +123,13 @@
     "enabled": true,
     "siteUrl": "https://petuniverse-values.pl",
     "cacheSeconds": 30
+  },
+  "boosts": {
+    "enabled": true,
+    "channelId": "1558251766770962453"
+  },
+  "rules": {
+    "enabled": true,
+    "channelId": "1557875144855396353"
   }
 }

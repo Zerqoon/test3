@@ -25,6 +25,8 @@ import { RoleReminderService } from './services/role-reminders.js';
 import { FilterNoticeService } from './services/filter-notices.js';
 import { TemporaryMessageService } from './services/temporary-messages.js';
 import { ValueService } from './services/values.js';
+import { BoostService } from './services/boosts.js';
+import { RulesService } from './services/rules.js';
 
 requireToken();
 assertPersistentDatabase();
@@ -50,6 +52,7 @@ async function shutdown(code = 0): Promise<void> {
     ctx.logs.stop(); ctx.history.stop(); ctx.usernames.stop(); ctx.giveaways.stop(); ctx.moderation.stop();
     ctx.members.stop(); ctx.tickets.stop(); ctx.embeds.stop(); ctx.linkFilter.stop();
     ctx.roleReminders.stop(); ctx.filterNotices.stop(); ctx.temporary.stop();
+    ctx.boosts.stop(); ctx.rules.stop();
   }
   if (maintenanceTimer) clearInterval(maintenanceTimer);
   lease.release();
@@ -82,15 +85,18 @@ client.once(Events.ClientReady, ready => {
     ctx.members = new MemberService(ctx); ctx.tickets = new TicketService(ctx); ctx.embeds = new EmbedService(ctx);
     ctx.linkFilter = new LinkFilterService(ctx);
     ctx.values = new ValueService({ ...config.values, siteUrl: env.valueSiteUrl });
+    ctx.boosts = new BoostService(ctx); ctx.rules = new RulesService(ctx);
     ctx.values.start();
     installEvents(ctx);
     // Interactive handlers and delivery workers become available before a full member preload.
     ctx.logs.start(); ctx.usernames.start(); ctx.giveaways.start(); ctx.moderation.start(); ctx.embeds.start();
     ctx.linkFilter.start(); ctx.roleReminders.start(); ctx.filterNotices.start(); ctx.temporary.start();
     ctx.members.initialize(guild.members.cache.values()); ctx.members.start(); ctx.tickets.start();
+    ctx.boosts.start(); ctx.rules.start();
     const activeContext = ctx;
     void Promise.all([config.channels.logs, config.channels.messageLogs, config.channels.memberLogs, config.channels.welcome,
-      ...(config.tickets.enabled ? [config.tickets.logChannelId, config.tickets.panelChannelId, config.tickets.voting.channelId] : [])]
+      ...(config.tickets.enabled ? [config.tickets.logChannelId, config.tickets.panelChannelId, config.tickets.voting.channelId] : []),
+      ...(config.boosts.enabled ? [config.boosts.channelId] : []), ...(config.rules.enabled ? [config.rules.channelId] : [])]
       .map(async id => {
         try {
           const channel = await guild.channels.fetch(id);

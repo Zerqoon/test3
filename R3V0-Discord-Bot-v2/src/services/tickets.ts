@@ -7,13 +7,14 @@ import {
 } from 'discord.js';
 import type { Config } from '../core/config.js';
 import type { Context } from '../core/types.js';
-import { isStaff } from '../core/access.js';
+import { allowed, isStaff } from '../core/access.js';
 import { colors, goatEmbed, noMentions } from '../core/embeds.js';
 import { errorCode, errorText, humanDuration, Mutex, safeText, stamp, UserError } from '../core/util.js';
 import { captureConversation } from './transcripts.js';
 import { TicketVoteService, type TicketReview } from './ticket-votes.js';
 import { VERSION } from '../core/version.js';
 import { ClanBlacklistError, ClanIntakeService, type ClanIntakeStatus } from './clan-intake.js';
+import { requireSupportOpen, supportAvailability, type SupportAvailability } from './support-hours.js';
 
 export type TicketKind = 'application' | 'support';
 export interface TicketRow {
@@ -35,17 +36,23 @@ export function ticketOverwrites(config: Config, guildId: string, botId: string,
   rows.set(botId, { id: botId, type: OverwriteType.Member, allow: read | write | PermissionFlagsBits.ManageChannels | PermissionFlagsBits.ManageMessages });
   return [...rows.values()];
 }
-export function ticketPanel(status: Pick<ClanIntakeStatus, 'accepting' | 'displayUsed' | 'available'> = { accepting: true, displayUsed: 0, available: 20 }) {
-  return { embeds: [goatEmbed('Applications & Support', colors.cyan).setDescription('Choose how we can help. Enter your Roblox **@username** to open a private ticket.')
+export function ticketPanel(status: Pick<ClanIntakeStatus, 'accepting' | 'displayUsed' | 'available'> = { accepting: true, displayUsed: 0, available: 20 },
+  support: SupportAvailability = { open: true, hours: '24/7', timezone: 'Europe/Warsaw', nextOpenAt: null, closesAt: null, key: 'always' }) {
+  const buttons: ButtonBuilder[] = [];
+  if (status.accepting) buttons.push(new ButtonBuilder().setCustomId('goat:ticket:open:application')
+    .setLabel(`Clan Application · ${status.displayUsed}/20`).setEmoji('📋').setStyle(ButtonStyle.Success));
+  if (support.open) buttons.push(new ButtonBuilder().setCustomId('goat:ticket:open:support').setLabel('Support').setEmoji('🎫').setStyle(ButtonStyle.Primary));
+  const recruitment = status.accepting ? `**Recruitment Open**\n**${status.available} free places** · ${status.displayUsed}/20 occupied or reserved.\nShare four screenshots and answer the AFK question.` :
+    status.available === 0 ? '**Clan Full · 20/20**\nAll places are occupied or reserved. The button returns when recruitment has a free place.' :
+      `**Recruitment Closed**\nWe are not recruiting for the clan right now.\n${status.displayUsed}/20 occupied or reserved.`;
+  const schedule = support.hours === '24/7' ? 'Available every day.' : `Daily **${support.hours} (${support.timezone})**.`;
+  const help = support.open ? `**Support Open**\n${schedule}\nAsk a question or report an issue.${support.closesAt ? `\nNew tickets close ${stamp(support.closesAt, 'R')}.` : ''}` :
+    `**Support Closed**\n${schedule}\nThe button returns automatically ${stamp(support.nextOpenAt!, 'R')}.`;
+  return { embeds: [goatEmbed('Applications & Support', colors.cyan).setDescription('Choose how we can help. Enter your Roblox **@username** to open a private ticket.\nAlready open conversations stay available after hours.')
     .setImage('attachment://goat-banner.png')
-    .addFields({ name: '📋  Clan Application', value: status.accepting ? `**${status.available} free places** · ${status.displayUsed}/20 occupied or reserved.\nShare four screenshots and answer the AFK question.` : '**Recruitment closed · 20/20**\nExisting applications can still be reviewed.', inline: true },
-      { name: '🎫  Support', value: 'Ask a question or report an issue. Add details and screenshots so we can help.', inline: true })
-    .setFooter({ text: 'One open ticket per member' }).setTimestamp(null)],
-    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId('goat:ticket:open:application').setLabel(`Clan Application · ${status.displayUsed}/20`).setEmoji('📋')
-        .setStyle(status.accepting ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(!status.accepting),
-      new ButtonBuilder().setCustomId('goat:ticket:open:support').setLabel('Support').setEmoji('🎫').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('goat:ticket:intake-status:current').setLabel('Recruitment Status').setStyle(ButtonStyle.Secondary))] };
+    .addFields({ name: '📋  Clan Application', value: recruitment, inline: true }, { name: '🎫  Support', value: help, inline: true })
+    .setFooter({ text: 'One open ticket per member • Only available options appear' }).setTimestamp(null)],
+    components: buttons.length ? [new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons)] : [] };
 }
 export function applicationRequirements() {
   return goatEmbed('Clan Application', colors.cyan).setDescription(
@@ -66,11 +73,9 @@ export function normalizeRobloxUsername(input: string): string {
   return name;
 }
 export function ticketControls(ticket: TicketRow, review?: TicketReview) {
+  if (ticket.state === 'closed') return [];
   const row = new ActionRowBuilder<ButtonBuilder>();
-  if (ticket.state === 'closed') row.addComponents(
-    new ButtonBuilder().setCustomId(`goat:ticket:reopen:${ticket.id}`).setLabel('Reopen').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`goat:ticket:delete:${ticket.id}`).setLabel('Delete').setStyle(ButtonStyle.Danger));
-  else row.addComponents(
+  row.addComponents(
     new ButtonBuilder().setCustomId(`goat:ticket:claim:${ticket.id}`).setLabel(ticket.claimed_by ? 'Claimed' : 'Claim')
       .setStyle(ButtonStyle.Secondary).setDisabled(!!ticket.claimed_by),
     new ButtonBuilder().setCustomId(`goat:ticket:close:${ticket.id}`).setLabel('Close').setStyle(ButtonStyle.Danger));
@@ -90,7 +95,7 @@ export class TicketService {
   private panelRetryAt = Date.now() + 5000;
   readonly votes: TicketVoteService;
   readonly intake: ClanIntakeService;
-  constructor(private readonly ctx: Context) {
+  constructor(private readonly ctx: Context, private readonly now: () => number = () => Date.now()) {
     this.intake = new ClanIntakeService(ctx);
     this.votes = new TicketVoteService(ctx);
     ctx.db.run("UPDATE ticket_reviews SET dirty=1,last_update=0 WHERE ticket_id IN (SELECT id FROM tickets WHERE guild_id=?) AND state IN ('waiting','voting','review','deciding')", ctx.guild.id);
@@ -111,6 +116,7 @@ export class TicketService {
     return this.ctx.db.get<TicketRow>('SELECT * FROM tickets WHERE guild_id=? AND channel_id=?', this.ctx.guild.id, channelId);
   }
   private enabled(): void { if (!this.ctx.config.tickets.enabled) throw new UserError('Tickets are currently unavailable.'); }
+  supportStatus(): SupportAvailability { return supportAvailability(this.ctx.config.tickets.supportHours, this.ctx.config.timezone, this.now()); }
   private async sendable(id: string): Promise<GuildTextBasedChannel> {
     const channel = await this.ctx.guild.channels.fetch(id);
     if (!channel?.isTextBased() || !('send' in channel)) throw new UserError('The configured ticket channel is unavailable.');
@@ -118,7 +124,7 @@ export class TicketService {
   }
   async ensurePanel(force = false): Promise<void> {
     await this.mutex.run('panel', async () => {
-      try { await this.syncPanel(force); this.panelReady = true; }
+      try { await this.syncPanel(force); this.panelReady = true; this.panelRetryAt = 0; }
       catch (err) { this.panelReady = false; this.panelRetryAt = Date.now() + 30000; throw err; }
     });
   }
@@ -135,25 +141,34 @@ export class TicketService {
     }
     if (!message) {
       const recent = await channel.messages.fetch({ limit: 100 });
-      message = [...recent.values()].find(m => m.author.id === this.ctx.client.user?.id && m.components.some(row =>
-        'components' in row && row.components.some(component => 'customId' in component && component.customId === 'goat:ticket:open:application')));
+      message = [...recent.values()].find(m => m.author.id === this.ctx.client.user?.id &&
+        (m.embeds.some(embed => embed.title === 'Applications & Support') || m.components.some(row =>
+          'components' in row && row.components.some(component => 'customId' in component && component.customId === 'goat:ticket:open:application'))));
     }
     const status = this.intake.status();
-    const panel = { ...ticketPanel(status), files: [new AttachmentBuilder(resolve('assets/goat-banner.png'))], allowedMentions: noMentions };
-    if (!message) message = await channel.send({ ...panel, nonce: `goat-panel-${channel.id.slice(-10)}`, enforceNonce: true });
+    const support = this.supportStatus();
+    const panel = { ...ticketPanel(status, support), files: [new AttachmentBuilder(resolve('assets/goat-banner.png'))], allowedMentions: noMentions };
+    if (!message) {
+      const nonce = this.ctx.db.meta('ticket_panel_send_nonce') || `gp-${randomUUID().slice(0, 18)}`;
+      this.ctx.db.setMeta('ticket_panel_send_nonce', nonce);
+      message = await channel.send({ ...panel, nonce, enforceNonce: true });
+    }
     else if (force || this.ctx.db.meta('ticket_panel_version') !== VERSION) await message.edit({ ...panel, attachments: [] });
-    else if (this.ctx.db.meta('ticket_panel_intake_revision') !== String(status.revision)) {
-      await message.edit({ ...ticketPanel(status), allowedMentions: noMentions });
+    else if (this.ctx.db.meta('ticket_panel_intake_revision') !== String(status.revision) || this.ctx.db.meta('ticket_panel_support_key') !== support.key) {
+      await message.edit({ ...ticketPanel(status, support), allowedMentions: noMentions });
     }
     this.ctx.db.setMeta('ticket_panel_channel_id', channel.id);
     this.ctx.db.setMeta('ticket_panel_message_id', message.id);
+    this.ctx.db.setMeta('ticket_panel_send_nonce', '');
     this.ctx.db.setMeta('ticket_panel_version', VERSION);
     this.ctx.db.setMeta('ticket_panel_intake_revision', String(status.revision));
+    this.ctx.db.setMeta('ticket_panel_support_key', support.key);
   }
   intakeChanged(): void { this.panelReady = false; this.panelRetryAt = 0; }
   private async refreshPanelIfNeeded(): Promise<void> {
     if (this.panelBusy || this.ctx.stopping || !this.ctx.config.tickets.enabled || Date.now() < this.panelRetryAt) return;
-    if (this.panelReady && this.ctx.db.meta('ticket_panel_intake_revision') === String(this.intake.status().revision)) return;
+    if (this.panelReady && this.ctx.db.meta('ticket_panel_intake_revision') === String(this.intake.status().revision) &&
+      this.ctx.db.meta('ticket_panel_support_key') === this.supportStatus().key) return;
     this.panelBusy = true;
     try { await this.ensurePanel(); }
     catch (err) { this.ctx.logger.warn({ error: errorText(err) }, 'GOAT ticket panel will retry'); }
@@ -164,7 +179,7 @@ export class TicketService {
     const status = available === null ? this.intake.close(actorId) : this.intake.open(available, actorId);
     this.intakeChanged();
     this.ctx.logs.enqueue({ embeds: [goatEmbed(available === null ? 'Clan Recruitment Closed' : 'Clan Recruitment Opened', available === null ? colors.orange : colors.green)
-      .setDescription(available === null ? 'New clan applications are paused. Existing tickets and Support remain available.' : `${status.available} free places are available.`)
+      .setDescription(available === null ? 'New clan applications are paused. Existing conversations stay available; new Support tickets follow daily opening hours.' : `${status.available} free places are available.`)
       .addFields({ name: 'Updated By', value: `<@${actorId}>`, inline: true },
         { name: 'Occupied', value: `${status.occupied}/20`, inline: true }, { name: 'Reserved Applications', value: String(status.reserved), inline: true }).toJSON()], channelId: this.ctx.config.tickets.logChannelId }, `clan-intake:${this.ctx.guild.id}:${status.revision}`);
     try { await this.ensurePanel(); return true; }
@@ -222,6 +237,7 @@ export class TicketService {
     if (interaction.channelId !== this.ctx.config.tickets.panelChannelId || interaction.message.id !== this.ctx.db.meta('ticket_panel_message_id')) throw new UserError('Use the current GOAT ticket panel.');
     const active = this.active(interaction.user.id);
     if (active) { await interaction.reply({ content: active.channel_id ? `Your existing ticket: <#${active.channel_id}>` : 'Your ticket is being prepared.', flags: MessageFlags.Ephemeral, allowedMentions: noMentions }); return; }
+    if (kind === 'support') requireSupportOpen(this.supportStatus());
     if (kind === 'application') {
       this.intake.assertAvailable();
       this.intake.assertMember(await this.ctx.guild.members.fetch({ user: interaction.user.id, force: true }));
@@ -251,6 +267,7 @@ export class TicketService {
       if (!ticket) {
         if (request.kind === 'application') this.intake.assertMember(member);
         this.ctx.db.transaction(() => {
+          if (request.kind === 'support') requireSupportOpen(this.supportStatus());
           this.quota(member.id, Date.now());
           const id = Number(this.ctx.db.run('INSERT INTO tickets(guild_id,owner_id,kind,created_at,roblox_username,owner_name) VALUES(?,?,?,?,?,?)', this.ctx.guild.id, member.id, request.kind, Date.now(), username, member.displayName).lastInsertRowid);
           if (request.kind === 'application') this.intake.reserve(id);
@@ -262,6 +279,69 @@ export class TicketService {
       const ready = this.get(ticket!.id);
       await interaction.editReply({ content: ready.channel_id ? `Your ticket: <#${ready.channel_id}>` : 'Your ticket is being prepared.', allowedMentions: noMentions });
     });
+  }
+  private async staffActor(actorId: string): Promise<void> {
+    const member = await this.ctx.guild.members.fetch({ user: actorId, force: true });
+    if (!allowed(actorId, member.roles.cache.keys(), this.ctx.config)) throw new UserError('This action is restricted.');
+  }
+  /** Staff exception: bypass daily hours and the member cooldown, never privacy or the queue cap. */
+  async openSupportFor(userId: string, actorId: string, reason: string, robloxUsername?: string): Promise<{ ticket: TicketRow; created: boolean }> {
+    this.enabled();
+    await this.staffActor(actorId);
+    const detail = reason.trim();
+    if (!detail || detail.length > 1000) throw new UserError('Enter a reason between 1 and 1000 characters.');
+    const username = robloxUsername ? normalizeRobloxUsername(robloxUsername) : null;
+    const member = await this.ctx.guild.members.fetch({ user: userId, force: true });
+    if (member.user.bot) throw new UserError('Bots cannot open tickets.');
+    return this.mutex.run(`open:${userId}`, async () => {
+      let ticket = this.active(userId);
+      const created = !ticket;
+      if (!ticket) {
+        this.ctx.db.transaction(() => {
+          const total = this.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM tickets WHERE guild_id=? AND state IN ('creating','open','closing','reopening')", this.ctx.guild.id)!.n;
+          if (total >= this.ctx.config.tickets.maxOpenTickets) throw new UserError('The ticket queue is full. Resolve an existing ticket first.');
+          const id = Number(this.ctx.db.run("INSERT INTO tickets(guild_id,owner_id,kind,created_at,roblox_username,owner_name) VALUES(?,?,'support',?,?,?)",
+            this.ctx.guild.id, userId, Date.now(), username, member.displayName).lastInsertRowid);
+          this.ctx.db.run('INSERT INTO ticket_support_overrides VALUES(?,?,?,?)', id, actorId, detail, Date.now());
+          ticket = this.get(id);
+          this.log(ticket, 'Support Ticket · Staff Exception', actorId, `A staff member opened Support for <@${userId}>.\nReason: ${safeText(detail, 1000)}`, `ticket-support-override:${id}`);
+        });
+      }
+      if (ticket!.state === 'creating') await this.mutex.run(`ticket:${ticket!.id}`, () => this.finishCreate(ticket!));
+      return { ticket: this.get(ticket!.id), created };
+    });
+  }
+  async reopen(id: number, actorId: string): Promise<void> {
+    this.enabled();
+    await this.staffActor(actorId);
+    await this.mutex.run(`ticket:${id}`, () => this.doReopen(this.get(id), actorId));
+  }
+  private async doReopen(fresh: TicketRow, actorId: string): Promise<void> {
+    if (fresh.state !== 'closed') throw new UserError('Only a closed ticket can be reopened.');
+    if (this.active(fresh.owner_id)) throw new UserError('There is already another active ticket for this member.');
+    const undecidedClan = fresh.kind === 'application' && !this.votes.get(fresh.id)?.decision;
+    if (undecidedClan) this.intake.assertMember(await this.ctx.guild.members.fetch({ user: fresh.owner_id, force: true }));
+    this.ctx.db.transaction(() => {
+      if (undecidedClan) this.intake.reserve(fresh.id);
+      this.ctx.db.run("UPDATE tickets SET state='reopening',retry_at=0 WHERE id=?", fresh.id);
+    });
+    this.intakeChanged();
+    await this.finishReopen(this.get(fresh.id));
+    this.log(fresh, 'Ticket Reopened', actorId, 'The conversation is open again.', `ticket-reopen:${fresh.id}:${fresh.revision}`);
+  }
+  async deleteClosed(id: number, actorId: string, beforeDelete: () => Promise<void>): Promise<void> {
+    this.enabled();
+    await this.staffActor(actorId);
+    await this.mutex.run(`ticket:${id}`, () => this.doDelete(this.get(id), actorId, beforeDelete));
+  }
+  private async doDelete(fresh: TicketRow, actorId: string, beforeDelete: () => Promise<void>): Promise<void> {
+    if (fresh.state !== 'closed') throw new UserError('Only a closed ticket can be deleted.');
+    const keys = fresh.transcript_key ? JSON.parse(fresh.transcript_key) as string[] : [];
+    if (!keys.length || !keys.every(key => this.ctx.logs.delivered(key))) throw new UserError('The transcript is still being delivered to Ticket Logs. Try again once delivery completes.');
+    await beforeDelete();
+    await (await this.channel(fresh)).delete(`GOAT • Ticket #${fresh.id} deleted by ${actorId}`);
+    this.ctx.db.run("UPDATE tickets SET state='deleted' WHERE id=?", fresh.id);
+    this.log(fresh, 'Ticket Deleted', actorId, 'The closed channel was removed. Its transcript remains in Ticket Logs.', `ticket-delete:${fresh.id}`);
   }
   private async finishCreate(ticket: TicketRow): Promise<void> {
     const member = await this.ctx.guild.members.fetch({ user: ticket.owner_id, force: true });
@@ -320,6 +400,8 @@ export class TicketService {
     embed.addFields({ name: 'Member', value: `<@${ticket.owner_id}>\n${safeText(ticket.owner_name ?? 'Member', 100)}`, inline: true },
       { name: 'Status', value: closed ? label : review?.state === 'voting' ? 'Voting in progress' : 'Open', inline: true },
       { name: 'Handler', value: ticket.claimed_by ? `<@${ticket.claimed_by}>` : 'Available for the team', inline: true });
+    const exception = this.ctx.db.get<{ actor_id: string; reason: string }>('SELECT actor_id,reason FROM ticket_support_overrides WHERE ticket_id=?', ticket.id);
+    if (exception && !closed) embed.addFields({ name: 'Opened by Staff', value: `<@${exception.actor_id}>\n${safeText(exception.reason, 900)}` });
     return { embeds: [embed], components: ticketControls(ticket, review), files: closed ? [] : [new AttachmentBuilder(resolve(
       ticket.kind === 'application' ? 'assets/application-mastery-example.png' : 'assets/goat-banner.png'))], allowedMentions: noMentions };
   }
@@ -350,7 +432,7 @@ export class TicketService {
       if (interaction.channelId !== this.ctx.config.tickets.panelChannelId || interaction.message.id !== this.ctx.db.meta('ticket_panel_message_id')) throw new UserError('Use the current ticket panel.');
       const status = this.intake.status();
       await interaction.reply({ embeds: [goatEmbed('Clan Recruitment', status.accepting ? colors.green : colors.orange)
-        .setDescription(status.accepting ? `**${status.available} free places** out of 20. Open Clan Application to reserve one.` : 'New clan applications are closed. Existing tickets and Support remain available.')
+        .setDescription(status.accepting ? `**${status.available} free places** out of 20. Open Clan Application to reserve one.` : status.available === 0 ? '**Clan Full · 20/20**. Existing applications can still be reviewed.' : '**Recruitment Closed**. We are not recruiting for the clan right now.')
         .addFields({ name: 'Occupied', value: `${status.occupied}/20`, inline: true }, { name: 'Active Applications', value: String(status.reserved), inline: true })],
       flags: MessageFlags.Ephemeral, allowedMentions: noMentions }); return;
     }
@@ -360,7 +442,7 @@ export class TicketService {
     if (action === 'start-vote') { await this.votes.start(interaction, ticket.id); return; }
     if (action === 'approve' || action === 'reject') throw new UserError('These old buttons have been replaced. Use /ticket-approve or /ticket-reject.');
     if (action !== 'close' && action !== 'delete') await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    await this.access(interaction, ticket, action === 'claim' || action === 'delete' || action === 'delete-confirm' || (action === 'reopen' && !!this.votes.get(ticket.id)?.decision));
+    await this.access(interaction, ticket, action === 'claim' || action === 'delete' || action === 'delete-confirm' || action === 'reopen');
     if (action === 'close') {
       if (ticket.state !== 'open') throw new UserError('This ticket is already closed or is being updated.');
       await interaction.showModal(new ModalBuilder().setCustomId(`goat:ticket:close-modal:${ticket.id}`).setTitle('Close Ticket').addLabelComponents(
@@ -385,28 +467,12 @@ export class TicketService {
         await interaction.editReply({ content: 'Ticket claimed.', allowedMentions: noMentions }); return;
       }
       if (action === 'reopen') {
-        if (fresh.state !== 'closed') throw new UserError('Only a closed ticket can be reopened.');
-        if (this.ctx.db.get("SELECT 1 FROM tickets WHERE guild_id=? AND owner_id=? AND state IN ('creating','open','closing','reopening') AND id<>?", this.ctx.guild.id, fresh.owner_id, fresh.id)) throw new UserError('There is already another active ticket for this member.');
-        const undecidedClan = fresh.kind === 'application' && !this.votes.get(fresh.id)?.decision;
-        if (undecidedClan) this.intake.assertMember(await this.ctx.guild.members.fetch({ user: fresh.owner_id, force: true }));
-        this.ctx.db.transaction(() => {
-          if (undecidedClan) this.intake.reserve(fresh.id);
-          this.ctx.db.run("UPDATE tickets SET state='reopening',retry_at=0 WHERE id=?", fresh.id);
-        });
-        this.intakeChanged();
-        await this.finishReopen(this.get(fresh.id));
-        this.log(fresh, 'Ticket Reopened', interaction.user.id, 'The conversation is open again.', `ticket-reopen:${fresh.id}:${fresh.revision}`);
+        await this.doReopen(fresh, interaction.user.id);
         await interaction.editReply({ content: 'Ticket reopened.', allowedMentions: noMentions }); return;
       }
       if (action === 'delete-confirm') {
         await this.access(interaction, fresh, true);
-        if (fresh.state !== 'closed') throw new UserError('Only a closed ticket can be deleted.');
-        const keys = fresh.transcript_key ? JSON.parse(fresh.transcript_key) as string[] : [];
-        if (!keys.length || !keys.every(key => this.ctx.logs.delivered(key))) throw new UserError('The transcript is still being delivered to Ticket Logs. Try again once delivery completes.');
-        await interaction.editReply({ content: 'Transcript saved. Deleting the ticket.', allowedMentions: noMentions });
-        await (await this.channel(fresh)).delete(`GOAT • Ticket #${fresh.id} deleted by ${interaction.user.id}`);
-        this.ctx.db.run("UPDATE tickets SET state='deleted' WHERE id=?", fresh.id);
-        this.log(fresh, 'Ticket Deleted', interaction.user.id, 'The closed channel was removed. Its transcript remains in Ticket Logs.', `ticket-delete:${fresh.id}`); return;
+        await this.doDelete(fresh, interaction.user.id, () => interaction.editReply({ content: 'Transcript saved. Deleting the ticket.', allowedMentions: noMentions }).then(() => undefined)); return;
       }
       throw new UserError('This ticket button is unavailable.');
     });

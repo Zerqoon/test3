@@ -49,6 +49,10 @@ export const configSchema = z.object({
     cooldownSeconds: z.number().int().min(0).max(86400).default(300),
     maxTicketsPerHour: z.number().int().min(1).max(20).default(3),
     maxOpenTickets: z.number().int().min(1).max(200).default(50),
+    supportHours: z.object({ enabled: z.boolean().default(true),
+      startHour: z.number().int().min(0).max(23).default(15),
+      endHour: z.number().int().min(1).max(24).default(22)
+    }).refine(s => s.startHour < s.endHour, 'Support closing hour must be after its opening hour').default({}),
     clanBlacklistRoleIds: z.array(snowflake).default(['1557809384166391918']),
     voting: z.object({ enabled: z.boolean().default(true), channelId: snowflake.default('1557433699572777000'),
       durationSeconds: z.number().int().min(60).max(604800).default(180),
@@ -56,6 +60,8 @@ export const configSchema = z.object({
   }).default({}),
   values: z.object({ enabled: z.boolean().default(true), siteUrl: z.string().url().default('https://petuniverse-values.pl'),
     cacheSeconds: z.number().int().min(5).max(300).default(30) }).default({}),
+  boosts: z.object({ enabled: z.boolean().default(true), channelId: snowflake.default('1558251766770962453') }).default({}),
+  rules: z.object({ enabled: z.boolean().default(true), channelId: snowflake.default('1557875144855396353') }).default({}),
   autoRegisterCommands: z.boolean()
 }).superRefine((c, ctx) => {
   if (new Set(Object.values(c.channels)).size !== Object.values(c.channels).length) ctx.addIssue({ code: 'custom', message: 'The configured log, username and welcome channels must be different.' });

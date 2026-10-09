@@ -213,7 +213,21 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS clan_seats_guild_state ON clan_application_seats(guild_id,state);
     `);
-    this.setMeta('schema_version', '8');
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS ticket_support_overrides (
+        ticket_id INTEGER PRIMARY KEY REFERENCES tickets(id), actor_id TEXT NOT NULL,
+        reason TEXT NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS boost_events (
+        event_key TEXT PRIMARY KEY, guild_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        source TEXT NOT NULL, source_at INTEGER NOT NULL, message_id TEXT UNIQUE, member_key TEXT UNIQUE,
+        payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'waiting', due_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS boost_waiting ON boost_events(state,due_at);
+      CREATE INDEX IF NOT EXISTS boost_member_time ON boost_events(guild_id,user_id,source_at);
+    `);
+    this.setMeta('schema_version', '9');
   }
   private statement(sql: string): StatementSync {
     let s = this.statements.get(sql);

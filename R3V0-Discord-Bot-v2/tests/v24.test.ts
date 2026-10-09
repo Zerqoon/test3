@@ -239,7 +239,7 @@ test('schema 7 migration preserves activity, role overrides and legacy deletion 
   db.run('INSERT INTO link_filter_roles VALUES(?,?,?,?,?)', GUILD, roleId, 1, STAFF, Date.now());
   db.run('INSERT INTO link_filter_jobs(message_id,guild_id,channel_id,snapshot,reason,created_at) VALUES(?,?,?,?,?,?)', s.id, GUILD, s.channelId, JSON.stringify(s), 'Saved', Date.now());
   db.run('ALTER TABLE link_filter_jobs DROP COLUMN kind'); db.setMeta('schema_version', '6'); db.close();
-  db = new Store(path); assert.equal(db.meta('schema_version'), '8'); assert.equal(db.count(GUILD, ALICE), 1);
+  db = new Store(path); assert.equal(db.meta('schema_version'), '9'); assert.equal(db.count(GUILD, ALICE), 1);
   assert.ok(db.get('SELECT 1 FROM link_filter_roles')); assert.equal(db.get<{ kind: string }>('SELECT kind FROM link_filter_jobs')!.kind, 'link');
   db.close(); f.ctx.db.close(); rmSync(directory, { recursive: true, force: true });
 });
@@ -263,7 +263,7 @@ test('help category buttons provide private instructions without member REST or 
 
 test('grouped ticket commands acknowledge and enforce fresh access while preserving old aliases', async () => {
   const f = fixture(); const grouped = commandDefinitions.find(command => command.name === 'ticket')!.toJSON();
-  assert.equal(grouped.options?.length, 9); assert.equal(grouped.default_member_permissions, null);
+  assert.equal(grouped.options?.length, 11); assert.equal(grouped.default_member_permissions, null);
   const command = (userId: string) => Object.assign(f.interaction(userId), { commandName: 'ticket', options: { getSubcommand: () => 'panel' },
     isAutocomplete: () => false, isChatInputCommand: () => true, isRepliable: () => true });
   const ordinary = command(ALICE); await routeInteraction(f.ctx, ordinary); assert.equal(f.ctx.db.meta('ticket_panel_message_id'), undefined);

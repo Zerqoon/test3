@@ -1,6 +1,6 @@
-# GOAT 2.5 — aktualizacja GitHub + Railway
+# GOAT 2.6 — aktualizacja GitHub + Railway
 
-Pobierz najnowszy **GOAT-Clan-Bot-v2-Tickets.zip** oraz **FIX-GOAT-INSTALL.ps1** do Pobranych. Nazwa ZIP-a pozostaje taka sama; nowy projekt w środku ma wersję **2.5.0**.
+Pobierz **GOAT-Clan-Bot-Value-API-Community.zip** i rozpakuj projekt. Nowe funkcje oraz prostą instalację opisuje **COMMUNITY-START-PL.md**. Projekt ma wersję **2.6.0**. Dołączony FIX-GOAT-INSTALL.ps1 rozpoznaje najnowszy pełny ZIP bota.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\zerqo\Downloads\FIX-GOAT-INSTALL.ps1"
@@ -10,7 +10,7 @@ Skrypt wybierze najnowszy ZIP, sprawdzi wersję i obecność systemu głosowania
 
 Jeżeli pliki są w innym folderze, podaj pełną ścieżkę skryptu oraz `-ZipPath "pełna ścieżka do ZIP-a"`. Alternatywnie rozpakuj projekt i uruchom dołączony `UPLOAD-GITHUB.ps1` z parametrem `-SourceDirectory` wskazującym folder zawierający `package.json`.
 
-W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.5.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
+W usłudze Railway użyj **Ctrl+K → Deploy Latest Commit** z gałęzi `main`. **Root Directory: `/R3V0-Discord-Bot-v2`**. Zwykłe Redeploy używa kodu wybranego wdrożenia. Porównaj commit ze skryptem; nowy log `GOAT ready` i `/goat-status` powinny pokazywać **2.6.0**. Panel oraz istniejące wiadomości ticketów są odświeżane po starcie. `/ticket-panel` naprawia panel ręcznie.
 
 Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployment-actions), [GitHub Autodeploys](https://docs.railway.com/deployments/github-autodeploys), [Keyboard Shortcuts](https://docs.railway.com/overview/keyboard-shortcuts).
 
@@ -27,11 +27,11 @@ Dokumentacja: [Deployment Actions](https://docs.railway.com/deployments/deployme
 
 Baza aktualizuje się automatycznie do schematu 8. Zachowane są statystyki, giveaway'e, archiwum nicków, sprawy moderacyjne, tickety i granica pierwszego dołączenia dla przypomnień. Nie usuwaj wolumenu ani pliku SQLite. Samo pobranie ZIP-a lub skopiowanie plików na komputer nie zmienia działającej usługi Railway.
 
-## Nowości 2.5: nabór 20 osób i blacklist
+## Rekrutacja 20 osób i blacklist w 2.6
 
 | Komenda | Działanie |
 | --- | --- |
-| `/clan-off` | Wyłącza nowe aplikacje. Przycisk **Clan Application · 20/20** jest szary i nieklikalny. |
+| `/clan-off` | Wyłącza nowe aplikacje. Przycisk Clan Application znika. Embed pokazuje **Recruitment Closed** i rzeczywisty licznik. |
 | `/open-ticket count:5` | Otwiera nabór na **5 wolnych miejsc**; przycisk pokazuje **15/20**. |
 | `/open-ticket count:20` | Otwiera wszystkie 20 miejsc, jeżeli nie ma aktywnych rezerwacji. |
 | `/clan-status` | Prywatnie pokazuje miejsca zajęte, wolne, zarezerwowane i stan panelu. |
@@ -40,9 +40,9 @@ Komendy są widoczne w menu Discorda; ich wykonanie nadal sprawdza dotychczasow�
 
 Limit jest stały: **20**. `count` oznacza **wolne miejsca**, po uwzględnieniu otwartych aplikacji. Przykład: masz 2 aktywne aplikacje i ustawiasz `count:5` → 13 miejsc zajętych, 2 zarezerwowane, 5 wolnych. Nie możesz ustawić 20 wolnych miejsc przy aktywnej rezerwacji. Polecenie służy również do aktualizacji wolnych miejsc, gdy ktoś opuszcza klan.
 
-Nowy ticket Clan rezerwuje jedno miejsce. Akceptacja przez głosowanie lub komendę zamienia rezerwację w miejsce zajęte. Odrzucenie, wycofanie lub usunięcie kanału bez decyzji zwalnia rezerwację. Support nie zużywa miejsc. `/clan-off` zachowuje aktualny licznik i istniejące rozmowy; zatrzymuje nowe aplikacje i ponowne otwieranie nierozpatrzonych aplikacji. Po zajęciu lub zarezerwowaniu ostatniego miejsca przycisk sam przełącza się na szary **20/20**. Po zwolnieniu rezerwacji wraca do aktywnego stanu, chyba że nabór został ręcznie wyłączony.
+Nowy ticket Clan rezerwuje jedno miejsce. Akceptacja przez głosowanie lub komendę zamienia rezerwację w miejsce zajęte. Odrzucenie, wycofanie lub usunięcie kanału bez decyzji zwalnia rezerwację. Support nie zużywa miejsc i jest dostępny do otwierania od 3 PM do 10 PM (Europe/Warsaw); administracja może użyć `/support-open` poza godzinami. `/clan-off` zachowuje aktualny licznik i istniejące rozmowy; zatrzymuje nowe aplikacje i ponowne otwieranie nierozpatrzonych aplikacji. Po zajęciu lub zarezerwowaniu ostatniego miejsca przycisk znika, a embed pokazuje **Clan Full · 20/20**. Po zwolnieniu rezerwacji wraca do aktywnego stanu, chyba że nabór został ręcznie wyłączony.
 
-Dodany przycisk **Recruitment Status** daje prywatną odpowiedź z dostępnością. Licznik aktualizuje ten sam panel bez tworzenia kolejnych wiadomości. Ustawienia, rezerwacje i decyzje przetrwają restart. Formularz otwarty przed zamknięciem naboru lub przed zajęciem ostatniego miejsca jest ponownie sprawdzany przy wysłaniu. Równoczesne zgłoszenia nie przekroczą limitu.
+Dostępność jest widoczna w embedzie; `/clan-status` daje prywatną odpowiedź. Licznik aktualizuje ten sam panel bez tworzenia kolejnych wiadomości. Ustawienia, rezerwacje i decyzje przetrwają restart. Formularz otwarty przed zamknięciem naboru lub przed zajęciem ostatniego miejsca jest ponownie sprawdzany przy wysłaniu. Równoczesne zgłoszenia nie przekroczą limitu.
 
 Przy aktualizacji istniejące nierozpatrzone, aktywne aplikacje dostają rezerwacje. Bot nie zgaduje liczby obecnych członków klanu: **ustaw rzeczywistą liczbę wolnych miejsc przez `/open-ticket count:...` albo użyj `/clan-off`**. Jeśli stara wersja utworzyła ponad 20 aplikacji, rozmowy pozostają; nowe zgłoszenia są zablokowane, a akceptacja nie przekroczy 20 zajętych miejsc.
 
@@ -57,7 +57,7 @@ Jedna zmiana ustawienia naboru trafia do Ticket Logs. Rezerwacje aktualizują li
 
 ## Nowe logi i filtr linków
 
-Po uruchomieniu sprawdź **2.5.0** w `/goat-status`, następnie użyj **`/message-logs test`**. Ta komenda wysyła jeden test bezpośrednio do **1557439487813091358**. **`/message-logs status`** prywatnie pokaże kanał, uprawnienia, czas ostatniej zaobserwowanej edycji/usunięcia i błąd dostarczenia. Po poprawieniu dostępu **`/message-logs retry`** ponowi zapisane logi.
+Po uruchomieniu sprawdź **2.6.0** w `/goat-status`, następnie użyj **`/message-logs test`**. Ta komenda wysyła jeden test bezpośrednio do **1557439487813091358**. **`/message-logs status`** prywatnie pokaże kanał, uprawnienia, czas ostatniej zaobserwowanej edycji/usunięcia i błąd dostarczenia. Po poprawieniu dostępu **`/message-logs retry`** ponowi zapisane logi.
 
 Logi korzystają z surowych zdarzeń Gateway i bazy, także gdy Discord.js nie ma już wiadomości albo kanału w pamięci. Edycje częściowe zachowują niezmienione załączniki i podglądy. Wiadomości ludzi na kanałach logów również są logowane. Wiadomości botów są oznaczane osobno, aby nie tworzyć pętli. Błędny pojedynczy wpis jest zachowywany do naprawy i nie zatrzymuje pozostałych.
 

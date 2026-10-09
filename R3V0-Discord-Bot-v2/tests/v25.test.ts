@@ -37,20 +37,22 @@ test('2.5 upgrades old configs with both blacklist restrictions and registers bo
   const linkConfig = legacy.linkFilter as Record<string, unknown>; delete linkConfig.gifBlockedRoleIds;
   const upgraded = configSchema.parse(legacy);
   assert.deepEqual(upgraded.tickets.clanBlacklistRoleIds, [blockedRole]);
-  assert.deepEqual(upgraded.linkFilter.gifBlockedRoleIds, [blockedRole]); assert.equal(VERSION, '2.5.0');
-  assert.equal(commandDefinitions.length, 41);
+  assert.deepEqual(upgraded.linkFilter.gifBlockedRoleIds, [blockedRole]); assert.equal(VERSION, '2.6.0');
+  assert.equal(commandDefinitions.length, 44);
   for (const name of ['clan-off', 'open-ticket', 'clan-status']) assert.equal(commandDefinitions.find(c => c.name === name)!.toJSON().default_member_permissions, null);
   const option = commandDefinitions.find(c => c.name === 'open-ticket')!.toJSON().options![0];
   assert.ok('min_value' in option && option.min_value === 1); assert.ok('max_value' in option && option.max_value === 20);
 });
 
-test('clan-off persists pause, renders grey disabled 20/20 and leaves existing applications and Support intact', async () => {
+test('clan-off persists pause, removes the application button and keeps accurate occupancy', async () => {
   const f = fixture(); await f.ctx.tickets.ensurePanel(); const existing = await f.openTicket('application');
   const panelId = f.ctx.db.meta('ticket_panel_message_id');
   assert.equal(await f.ctx.tickets.setIntake(null, STAFF), true);
-  const [clan, support] = panelButtons(f);
-  assert.ok('label' in clan && clan.label === 'Clan Application · 20/20');
-  assert.equal(clan.style, ButtonStyle.Secondary); assert.equal(clan.disabled, true); assert.equal(support.disabled, undefined);
+  const [support] = panelButtons(f);
+  assert.ok('label' in support && support.label === 'Support');
+  assert.equal(support.style, ButtonStyle.Primary); assert.equal(support.disabled, undefined);
+  assert.equal(panelButtons(f).length, 1); assert.equal(intake(f).displayUsed, 1);
+  assert.match(ticketPanel(intake(f)).embeds[0].toJSON().fields![0].value, /Recruitment Closed/);
   assert.equal(f.ctx.tickets.get(existing.id).state, 'open');
   assert.equal(f.ctx.db.meta('ticket_panel_message_id'), panelId);
   await assert.rejects(f.ctx.tickets.open(f.interaction(BOB), 'application'), /currently closed/);
@@ -83,7 +85,8 @@ test('simultaneous submissions atomically reserve at most twenty places and roll
   assert.equal(intake(f).reserved, 20); assert.equal(intake(f).available, 0);
   assert.equal(f.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM tickets')!.n, 20);
   assert.equal(f.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM ticket_requests WHERE ticket_id IS NULL')!.n, 1);
-  await f.ctx.tickets.tick(); assert.equal(panelButtons(f)[0].disabled, true);
+  await f.ctx.tickets.tick(); assert.equal(panelButtons(f).length, 1);
+  const support = panelButtons(f)[0]; assert.ok('label' in support && support.label === 'Support');
   f.ctx.db.close();
 });
 
@@ -122,11 +125,11 @@ test('withdrawing and reopening an undecided application releases and reserves e
   const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.ctx.tickets.setIntake(1, STAFF);
   const ticket = await f.openTicket('application'); assert.equal(intake(f).available, 0);
   await f.ctx.tickets.close(ticket.id, ALICE, 'Withdrawn'); assert.equal(intake(f).available, 1);
-  await f.ctx.tickets.button(f.interaction(ALICE, ticket.channel_id!), 'reopen', String(ticket.id));
+  await f.ctx.tickets.button(f.interaction(STAFF, ticket.channel_id!), 'reopen', String(ticket.id));
   assert.equal(intake(f).available, 0); assert.equal(intake(f).reserved, 1);
   await f.ctx.tickets.close(ticket.id, ALICE, 'Withdrawn again'); assert.equal(intake(f).reserved, 0);
   await f.ctx.tickets.setIntake(null, STAFF);
-  await assert.rejects(f.ctx.tickets.button(f.interaction(ALICE, ticket.channel_id!), 'reopen', String(ticket.id)), /currently closed/);
+  await assert.rejects(f.ctx.tickets.button(f.interaction(STAFF, ticket.channel_id!), 'reopen', String(ticket.id)), /currently closed/);
   assert.equal(f.ctx.tickets.get(ticket.id).state, 'closed'); assert.equal(intake(f).reserved, 0); f.ctx.db.close();
 });
 
@@ -168,7 +171,7 @@ test('three No votes release the reservation before closure and reopening recrui
   const ticket = await f.openTicket('application'); await f.startVote(ticket.id); const third = '1550000000000300011'; f.addMember(third);
   for (const voter of [BOB, STAFF, third]) await f.ctx.tickets.votes.vote(f.voteInteraction(voter, ticket.id), ticket.id, 'no');
   assert.equal(intake(f).available, 1); assert.equal(intake(f).occupied, 19); assert.equal(intake(f).reserved, 0);
-  await f.ctx.tickets.votes.tick(); await f.ctx.tickets.ensurePanel(); assert.equal(panelButtons(f)[0].disabled, false); f.ctx.db.close();
+  await f.ctx.tickets.votes.tick(); await f.ctx.tickets.ensurePanel(); assert.equal(panelButtons(f)[0].disabled, undefined); f.ctx.db.close();
 });
 
 test('channel removal and owner departure release undecided and pending reservations', async () => {
@@ -232,7 +235,7 @@ test('upgrade seeds existing undecided clan applications without duplicating sea
   }
   let service = new ClanIntakeService(f.ctx); assert.equal(service.status().reserved, 1);
   service = new ClanIntakeService(f.ctx); assert.equal(service.status().reserved, 1); assert.equal(service.status().available, 19);
-  assert.equal(f.ctx.db.meta('schema_version'), '8'); f.ctx.db.close();
+  assert.equal(f.ctx.db.meta('schema_version'), '9'); f.ctx.db.close();
 });
 
 test('schema 7 upgrades on disk preserve activity, reservations, accepted places and pause across process restarts', () => {
@@ -245,7 +248,7 @@ test('schema 7 upgrades on disk preserve activity, reservations, accepted places
   assert.equal(intake(f).reserved, 2); db.transaction(() => f.ctx.tickets.intake.settle(acceptedId, true)); f.ctx.tickets.intake.close(STAFF); db.close();
   f.ctx.db = new Store(path); f.ctx.tickets = new TicketService(f.ctx);
   assert.equal(intake(f).occupied, 1); assert.equal(intake(f).reserved, 1); assert.equal(intake(f).enabled, false);
-  assert.equal(f.ctx.db.count(GUILD, ALICE), 1); assert.equal(f.ctx.db.meta('schema_version'), '8'); f.ctx.db.close();
+  assert.equal(f.ctx.db.count(GUILD, ALICE), 1); assert.equal(f.ctx.db.meta('schema_version'), '9'); f.ctx.db.close();
   rmSync(directory, { recursive: true, force: true });
 });
 

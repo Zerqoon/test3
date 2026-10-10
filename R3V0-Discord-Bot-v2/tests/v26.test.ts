@@ -51,7 +51,7 @@ test('2.6 config upgrades add requested channels, default hours and guarded comm
   const upgraded = configSchema.parse(legacy);
   assert.deepEqual(upgraded.tickets.supportHours, hours);
   assert.equal(upgraded.boosts.channelId, '1558251766770962453'); assert.equal(upgraded.rules.channelId, '1557875144855396353');
-  assert.equal(VERSION, '2.6.0'); assert.equal(commandDefinitions.length, 44);
+  assert.equal(VERSION, '2.6.1'); assert.equal(commandDefinitions.length, 44);
   for (const name of ['support-open', 'rules-refresh', 'boost-preview']) {
     const cmd = commandDefinitions.find(c => c.name === name)!.toJSON(); assert.equal(cmd.default_member_permissions, null);
   }

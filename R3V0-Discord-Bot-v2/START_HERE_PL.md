@@ -1,4 +1,4 @@
-# GOAT 2.6 — uruchomienie
+# GOAT 2.6.1 — uruchomienie
 
 Projekt jest przygotowany dla Twojego serwera. Kanały, rola klanu, dwie role administracji oraz Twój osobisty dostęp są już wpisane w `config.json`. Cały interfejs bota jest po angielsku.
 
@@ -17,7 +17,7 @@ Nie musisz wpisywać ID serwera — bot rozpozna je po kanale z nickami. `GUILD_
 
 ## Najważniejsze komendy
 
-Nowość **2.6**: Support otwiera się codziennie **3 PM–10 PM (Europe/Warsaw)**. Przycisk znika poza tymi godzinami i wraca automatycznie. `/support-open user:@osoba reason:...` pozwala administracji otworzyć ticket wcześniej lub później. `/clan-off` usuwa przycisk aplikacji i pokazuje **Recruitment Closed**; pełny klan pokazuje **Clan Full · 20/20**. `/open-ticket count:5` ustawia pięć wolnych miejsc. Zamknięty ticket nie ma przycisków; administracja używa `/ticket reopen` lub `/ticket delete confirm:True`. Dodatkowo bot automatycznie publikuje regulamin i dziękuje za boost. Szczegóły: **COMMUNITY-START-PL.md**.
+Nowość **2.6.1**: `/open-ticket count:0` ustawia **Clan Full · 20/20** i usuwa przycisk aplikacji, a `/open-ticket count:5` ustawia pięć wolnych miejsc. Panel ma czytelne sekcje i małą grafikę GOAT. Support otwiera się codziennie **3 PM–10 PM (Europe/Warsaw)**. Przycisk znika poza tymi godzinami i wraca automatycznie. `/support-open user:@osoba reason:...` pozwala administracji otworzyć ticket wcześniej lub później. `/clan-off` usuwa przycisk aplikacji i pokazuje **Recruitment Closed**. Zamknięty ticket nie ma przycisków; administracja używa `/ticket reopen` lub `/ticket delete confirm:True`. Bot automatycznie publikuje regulamin i dziękuje za boost. Szczegóły: **COMMUNITY-START-PL.md**.
 
 | Komenda | Działanie |
 | --- | --- |

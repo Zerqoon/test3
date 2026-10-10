@@ -17,6 +17,7 @@ import { ClanBlacklistError, ClanIntakeService, type ClanIntakeStatus } from './
 import { requireSupportOpen, supportAvailability, type SupportAvailability } from './support-hours.js';
 
 export type TicketKind = 'application' | 'support';
+export const TICKET_PANEL_TITLE = 'GOAT · Ticket Center';
 export interface TicketRow {
   id: number; guild_id: string; owner_id: string; kind: TicketKind; channel_id: string | null;
   opening_message_id: string | null; state: string; claimed_by: string | null; created_at: number;
@@ -42,16 +43,17 @@ export function ticketPanel(status: Pick<ClanIntakeStatus, 'accepting' | 'displa
   if (status.accepting) buttons.push(new ButtonBuilder().setCustomId('goat:ticket:open:application')
     .setLabel(`Clan Application · ${status.displayUsed}/20`).setEmoji('📋').setStyle(ButtonStyle.Success));
   if (support.open) buttons.push(new ButtonBuilder().setCustomId('goat:ticket:open:support').setLabel('Support').setEmoji('🎫').setStyle(ButtonStyle.Primary));
-  const recruitment = status.accepting ? `**Recruitment Open**\n**${status.available} free places** · ${status.displayUsed}/20 occupied or reserved.\nShare four screenshots and answer the AFK question.` :
-    status.available === 0 ? '**Clan Full · 20/20**\nAll places are occupied or reserved. The button returns when recruitment has a free place.' :
-      `**Recruitment Closed**\nWe are not recruiting for the clan right now.\n${status.displayUsed}/20 occupied or reserved.`;
-  const schedule = support.hours === '24/7' ? 'Available every day.' : `Daily **${support.hours} (${support.timezone})**.`;
-  const help = support.open ? `**Support Open**\n${schedule}\nAsk a question or report an issue.${support.closesAt ? `\nNew tickets close ${stamp(support.closesAt, 'R')}.` : ''}` :
-    `**Support Closed**\n${schedule}\nThe button returns automatically ${stamp(support.nextOpenAt!, 'R')}.`;
-  return { embeds: [goatEmbed('Applications & Support', colors.cyan).setDescription('Choose how we can help. Enter your Roblox **@username** to open a private ticket.\nAlready open conversations stay available after hours.')
-    .setImage('attachment://goat-banner.png')
-    .addFields({ name: '📋  Clan Application', value: recruitment, inline: true }, { name: '🎫  Support', value: help, inline: true })
-    .setFooter({ text: 'One open ticket per member • Only available options appear' }).setTimestamp(null)],
+  const recruitment = status.accepting ? `**Recruitment Open** · **${status.displayUsed}/20**\n**${status.available} free places** · 4 screenshots + AFK availability.` :
+    status.available === 0 ? '**Clan Full · 20/20**\nNo free places. Applications reopen when a place is released.' :
+      `**Recruitment Closed** · **${status.displayUsed}/20**\nWe are not recruiting right now.`;
+  const schedule = support.hours === '24/7' ? 'Available **24/7**.' : `Daily **${support.hours}** · ${support.timezone}`;
+  const help = support.open ? `**Support Open**\n${schedule}\n${support.closesAt ? `New requests close ${stamp(support.closesAt, 'R')}.` : 'Ask a question or report an issue.'}` :
+    `**Support Closed**\n${schedule}\nOpens ${stamp(support.nextOpenAt!, 'R')}.`;
+  return { embeds: [goatEmbed(TICKET_PANEL_TITLE, colors.cyan)
+    .setDescription(buttons.length ? 'Choose an option below to open a private ticket.\nHave your Roblox **@username** ready.' : 'New tickets are currently unavailable.\nCheck the availability below.')
+    .setThumbnail('attachment://goat-banner.png')
+    .addFields({ name: '📋  Clan Applications', value: recruitment, inline: false }, { name: '🎫  Support Desk', value: help, inline: false })
+    .setFooter({ text: 'One active ticket per member • Existing conversations stay open' }).setTimestamp(null)],
     components: buttons.length ? [new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons)] : [] };
 }
 export function applicationRequirements() {
@@ -142,7 +144,7 @@ export class TicketService {
     if (!message) {
       const recent = await channel.messages.fetch({ limit: 100 });
       message = [...recent.values()].find(m => m.author.id === this.ctx.client.user?.id &&
-        (m.embeds.some(embed => embed.title === 'Applications & Support') || m.components.some(row =>
+        (m.embeds.some(embed => embed.title === TICKET_PANEL_TITLE || embed.title === 'Applications & Support') || m.components.some(row =>
           'components' in row && row.components.some(component => 'customId' in component && component.customId === 'goat:ticket:open:application'))));
     }
     const status = this.intake.status();
@@ -178,8 +180,10 @@ export class TicketService {
     this.enabled();
     const status = available === null ? this.intake.close(actorId) : this.intake.open(available, actorId);
     this.intakeChanged();
-    this.ctx.logs.enqueue({ embeds: [goatEmbed(available === null ? 'Clan Recruitment Closed' : 'Clan Recruitment Opened', available === null ? colors.orange : colors.green)
-      .setDescription(available === null ? 'New clan applications are paused. Existing conversations stay available; new Support tickets follow daily opening hours.' : `${status.available} free places are available.`)
+    this.ctx.logs.enqueue({ embeds: [goatEmbed(available === null ? 'Clan Recruitment Closed' : status.available === 0 ? 'Clan Full · 20/20' : 'Clan Recruitment Opened', available === null || status.available === 0 ? colors.orange : colors.green)
+      .setDescription(available === null ? 'New clan applications are paused. Existing conversations stay available; new Support tickets follow daily opening hours.' :
+        status.available === 0 ? 'There are no free places. The panel shows Clan Full · 20/20 and the Clan Application button is removed. Existing applications keep their reservations.' :
+          `${status.available} free places are available.`)
       .addFields({ name: 'Updated By', value: `<@${actorId}>`, inline: true },
         { name: 'Occupied', value: `${status.occupied}/20`, inline: true }, { name: 'Reserved Applications', value: String(status.reserved), inline: true }).toJSON()], channelId: this.ctx.config.tickets.logChannelId }, `clan-intake:${this.ctx.guild.id}:${status.revision}`);
     try { await this.ensurePanel(); return true; }

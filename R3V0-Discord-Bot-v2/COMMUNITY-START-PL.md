@@ -1,6 +1,8 @@
-# GOAT 2.6 — cały projekt bota
+# GOAT 2.6.1 — cały projekt bota
 
 Ten ZIP zawiera cały bot: Value API, nowy Welcome Canvas, tickety, aplikacje, głosowania, moderację, username DM, GIF-y, logi i giveawaye, a także poniższe nowe funkcje.
+
+**Poprawka 2.6.1:** `/open-ticket count:0` jest dozwolone i ustawia **Clan Full · 20/20** bez przycisku aplikacji. Panel ma teraz dwie czytelne sekcje jedna pod drugą, krótsze komunikaty i małą grafikę GOAT zamiast dużego bannera. Bot odświeża tę samą wiadomość po aktualizacji.
 
 ## Co działa automatycznie
 
@@ -29,17 +31,20 @@ Komenda działa również przed 3 PM i po 10 PM. Nie otwiera rekrutacji i nie zu
 | `/rules-refresh` | Publikuje lub odświeża regulamin na ustawionym kanale. |
 | `/boost-preview` | Pokazuje podziękowanie za boost wyłącznie Tobie. |
 | `/ticket-panel` | Odświeża panel z bieżącymi godzinami i stanem klanu. |
+| `/open-ticket count:0` | Ustawia pełny klan **20/20** i usuwa przycisk aplikacji. |
 | `/open-ticket count:5` | Otwiera nabór na pięć wolnych miejsc; aktywne aplikacje już rezerwują miejsca. |
 
 Bot nie odczytuje liczby członków klanu z Roblox. Ustaw rzeczywistą liczbę wolnych miejsc przez `/open-ticket count:...`; potem rezerwacje i decyzje aktualizują licznik automatycznie.
 
+`count` przyjmuje **0–20**. Przy `count:0` istniejące aplikacje i głosowania pozostają aktywne. Ich rezerwacje wchodzą w 20/20: akceptacja zamienia rezerwację w miejsce zajęte, a odrzucenie lub wycofanie zwalnia jedno miejsce i przywraca nabór. Do bezterminowego wstrzymania rekrutacji służy `/clan-off`. Support działa według swoich godzin także przy pełnym klanie.
+
 ## Jak uruchomić aktualizację
 
-1. Rozpakuj **GOAT-Clan-Bot-Value-API-Community.zip**. W środku jest folder **GOAT-Clan-Bot**.
+1. Rozpakuj **GOAT-Clan-Bot-Value-API-Community-v2.6.1.zip**. W środku jest folder **GOAT-Clan-Bot**. Dotychczasowy **FIX-GOAT-INSTALL-API.ps1** również rozpoznaje ten ZIP.
 2. Dla istniejącego GitHub/Railway: w tym folderze uruchom **UPLOAD-GITHUB.ps1**. Używa całego rozpakowanego projektu. Szczegóły są w **UPDATE_V2_PL.md**.
 3. Railway: **Deploy Latest Commit** z `main`, Root Directory `/R3V0-Discord-Bot-v2`. Zachowaj istniejący token i volume z bazą; ustawienia opisuje **RAILWAY_SETUP_PL.md**.
 4. Lokalnie: skopiuj projekt do folderu bota, zachowując istniejący `.env` i katalog bazy, następnie uruchom **START-GOAT.bat**. Potrzebny jest Node.js 24.15 lub nowszy.
-5. `/goat-status` ma pokazać **2.6.0**. Komendy, panel i regulamin aktualizują się automatycznie przy starcie.
+5. `/goat-status` ma pokazać **2.6.1**. Komendy, panel i regulamin aktualizują się automatycznie przy starcie.
 
 Kanały, role, `/value` i kolorystyka są już skonfigurowane. Zmiana godzin: `tickets.supportHours.startHour` i `endHour` w `config.json`. Zmiana strefy: `timezone`. Możesz wyłączyć ograniczenie godzin przez `tickets.supportHours.enabled: false`. ID nowych kanałów są w `boosts.channelId` i `rules.channelId`.
 

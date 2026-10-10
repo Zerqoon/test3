@@ -287,7 +287,7 @@ test('private diagnostics verify the destination and direct delivery tests bypas
   f.ctx.logs.enqueue({ channelId, embeds: [{ title: 'Saved log' }] }, 'saved'); f.setSendFailure(true); await f.ctx.logs.flush(); f.setSendFailure(false);
   const url = await f.ctx.logs.testMessageLogs(STAFF); assert.match(url, new RegExp(channelId));
   assert.equal(f.ctx.logs.pending(), 1); assert.equal(f.sent[0].channelId, channelId);
-  const diagnostic = (await f.ctx.logs.messageStatus()).toJSON(); assert.equal(diagnostic.fields!.find(field => field.name === 'Version')!.value, '2.6.0');
+  const diagnostic = (await f.ctx.logs.messageStatus()).toJSON(); assert.equal(diagnostic.fields!.find(field => field.name === 'Version')!.value, '2.6.1');
   assert.match(diagnostic.fields!.find(field => field.name === 'Channel Access')!.value, /verified/);
   assert.equal(f.ctx.logs.retryMessageLogs(), 1); await f.ctx.logs.flush(); assert.equal(f.ctx.logs.pending(), 0); f.ctx.db.close();
 });

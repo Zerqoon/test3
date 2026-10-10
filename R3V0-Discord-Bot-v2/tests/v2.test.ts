@@ -136,7 +136,7 @@ test('ticket overwrites deny outsiders and grant only opener, invited members, s
 
 test('ticket panel and application checklist include the supplied branding and four screenshots', () => {
   const panel = ticketPanel(); assert.deepEqual(panel.components[0].toJSON().components.map(component => 'label' in component ? component.label : ''), ['Clan Application · 0/20', 'Support']);
-  assert.equal(panel.embeds[0].toJSON().image?.url, 'attachment://goat-banner.png');
+  assert.equal(panel.embeds[0].toJSON().thumbnail?.url, 'attachment://goat-banner.png');
   const requirements = applicationRequirements().toJSON(); assert.equal(requirements.image?.url, 'attachment://application-mastery-example.png');
   for (const phrase of ['Mastery', 'Gamepasses', 'Inventory', 'Stats', '@username']) assert.ok(requirements.description?.includes(phrase));
   for (const id of [...config.access.staffRoleIds, ...config.access.ownerUserIds]) assert.ok(!JSON.stringify(panel).includes(id));
@@ -400,7 +400,7 @@ test('upgrade migrates ticket username and review structures without resetting t
   original.setMeta('username_reminder_started_at', '123'); original.run('ALTER TABLE tickets DROP COLUMN roblox_username'); original.run('ALTER TABLE tickets DROP COLUMN owner_name'); original.close();
   const migrated = new Store(file); const columns = migrated.all<{ name: string }>('PRAGMA table_info(tickets)');
   assert.ok(columns.some(column => column.name === 'roblox_username')); assert.equal(migrated.meta('username_reminder_started_at'), '123');
-  assert.equal(migrated.meta('schema_version'), '9'); assert.equal(VERSION, '2.6.0');
+  assert.equal(migrated.meta('schema_version'), '9'); assert.equal(VERSION, '2.6.1');
   const review = migrated.get<TicketReview>('SELECT * FROM ticket_reviews'); assert.equal(review, undefined); migrated.close(); rmSync(path, { recursive: true, force: true });
 });
 

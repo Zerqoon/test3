@@ -37,11 +37,11 @@ test('2.5 upgrades old configs with both blacklist restrictions and registers bo
   const linkConfig = legacy.linkFilter as Record<string, unknown>; delete linkConfig.gifBlockedRoleIds;
   const upgraded = configSchema.parse(legacy);
   assert.deepEqual(upgraded.tickets.clanBlacklistRoleIds, [blockedRole]);
-  assert.deepEqual(upgraded.linkFilter.gifBlockedRoleIds, [blockedRole]); assert.equal(VERSION, '2.6.0');
+  assert.deepEqual(upgraded.linkFilter.gifBlockedRoleIds, [blockedRole]); assert.equal(VERSION, '2.6.1');
   assert.equal(commandDefinitions.length, 44);
   for (const name of ['clan-off', 'open-ticket', 'clan-status']) assert.equal(commandDefinitions.find(c => c.name === name)!.toJSON().default_member_permissions, null);
   const option = commandDefinitions.find(c => c.name === 'open-ticket')!.toJSON().options![0];
-  assert.ok('min_value' in option && option.min_value === 1); assert.ok('max_value' in option && option.max_value === 20);
+  assert.ok('min_value' in option && option.min_value === 0); assert.ok('max_value' in option && option.max_value === 20);
 });
 
 test('clan-off persists pause, removes the application button and keeps accurate occupancy', async () => {
@@ -61,13 +61,13 @@ test('clan-off persists pause, removes the application button and keeps accurate
   f.ctx.db.close();
 });
 
-test('open-ticket count denotes free places, validates 1–20 and cannot erase active reservations', async () => {
+test('open-ticket count denotes free places, validates 0–20 and cannot erase active reservations', async () => {
   const f = fixture(); await f.ctx.tickets.ensurePanel(); await f.openTicket('application');
   await f.ctx.tickets.setIntake(5, STAFF);
   assert.equal(intake(f).available, 5); assert.equal(intake(f).displayUsed, 15); assert.equal(intake(f).occupied, 14); assert.equal(intake(f).reserved, 1);
   const clan = panelButtons(f)[0]; assert.ok('label' in clan && clan.label === 'Clan Application · 15/20');
   const before = intake(f);
-  for (const n of [0, 21, 1.5, NaN]) assert.throws(() => f.ctx.tickets.intake.open(n, STAFF), /1 and 20/);
+  for (const n of [-1, 21, 1.5, NaN]) assert.throws(() => f.ctx.tickets.intake.open(n, STAFF), /0 and 20/);
   assert.throws(() => f.ctx.tickets.intake.open(20, STAFF), /reserved applications/);
   assert.deepEqual(intake(f), before); f.ctx.db.close();
 });

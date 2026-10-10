@@ -96,8 +96,10 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
     case 'clan-off': case 'open-ticket': {
       const updated = await ctx.tickets.setIntake(name === 'clan-off' ? null : i.options.getInteger('count', true), i.user.id);
       const status = ctx.tickets.intake.status();
-      await reply(name === 'clan-off' ? 'Clan Recruitment Closed' : 'Clan Recruitment Opened',
-        (name === 'clan-off' ? 'New clan applications are paused. The Clan Application button is removed and the panel shows **Recruitment Closed**.' : `**${status.available} free places**. The Clan Application button displays **${status.displayUsed}/20**.`) +
+      await reply(name === 'clan-off' ? 'Clan Recruitment Closed' : status.available === 0 ? 'Clan Full · 20/20' : 'Clan Recruitment Opened',
+        (name === 'clan-off' ? 'New clan applications are paused. The Clan Application button is removed and the panel shows **Recruitment Closed**.' :
+          status.available === 0 ? '**0 free places**. The panel shows **Clan Full · 20/20** and the Clan Application button is removed.' :
+            `**${status.available} free places**. The Clan Application button displays **${status.displayUsed}/20**.`) +
         '\nExisting conversations remain available. New Support tickets follow daily opening hours.' + (updated ? '' : '\nThe setting is saved. The panel could not be updated yet; automatic retry is queued.'));
       return;
     }
@@ -130,7 +132,7 @@ async function command(ctx: Context, i: ChatInputCommandInteraction): Promise<vo
         { name: 'Reserved Applications', value: String(status.reserved), inline: true },
         { name: 'Panel', value: ctx.db.meta('ticket_panel_intake_revision') === String(status.revision) ? 'Up to date' : 'Update queued', inline: true },
         { name: 'Last Recruitment Setting', value: `${stamp(status.updatedAt)}${status.updatedBy ? ` · <@${status.updatedBy}>` : ''}` })
-        .setDescription('Use /open-ticket count to set the number of free places. Active applications already reserve places; rejecting or withdrawing an application releases its reservation.')], allowedMentions: noMentions }); return;
+        .setDescription('Use /open-ticket count:0 to mark the clan full, or count:1–20 to offer free places. Active applications already reserve places; rejecting or withdrawing an application releases its reservation.')], allowedMentions: noMentions }); return;
     }
     case 'ticket-start-vote': {
       const ticket = ctx.tickets.fromChannel(i.channelId);

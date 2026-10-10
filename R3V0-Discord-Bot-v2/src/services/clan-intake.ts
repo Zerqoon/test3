@@ -49,7 +49,7 @@ export class ClanIntakeService {
     return this.status();
   }
   open(available: number, actorId: string): ClanIntakeStatus {
-    if (!Number.isInteger(available) || available < 1 || available > CLAN_CAPACITY) throw new UserError('Choose between 1 and 20 free places.');
+    if (!Number.isInteger(available) || available < 0 || available > CLAN_CAPACITY) throw new UserError('Choose between 0 and 20 free places. Use 0 to mark the clan full.');
     return this.ctx.db.transaction(() => {
       const status = this.status();
       if (status.reserved + available > CLAN_CAPACITY) {

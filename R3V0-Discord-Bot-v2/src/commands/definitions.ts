@@ -90,8 +90,8 @@ export const commandDefinitions = [
   new SlashCommandBuilder().setName('rules-refresh').setDescription('Publish or refresh the English community rules in the configured channel'),
   new SlashCommandBuilder().setName('boost-preview').setDescription('Privately preview the server boost thank-you embed')
     .addUserOption(o => o.setName('user').setDescription('Member shown in the preview; default: yourself')),
-  new SlashCommandBuilder().setName('open-ticket').setDescription('Reopen clan recruitment with a chosen number of free places')
-    .addIntegerOption(o => o.setName('count').setDescription('Free places out of 20; existing applications already reserve places').setRequired(true).setMinValue(1).setMaxValue(20)),
+  new SlashCommandBuilder().setName('open-ticket').setDescription('Set free clan places; use count:0 to mark the clan full')
+    .addIntegerOption(o => o.setName('count').setDescription('Free places (0–20); 0 marks the clan full and removes the application button').setRequired(true).setMinValue(0).setMaxValue(20)),
   new SlashCommandBuilder().setName('clan-status').setDescription('View free clan places, occupied places and reserved applications'),
   new SlashCommandBuilder().setName('ticket-list').setDescription('Show recent GOAT tickets'),
   new SlashCommandBuilder().setName('ticket-add').setDescription('Add a member to the current GOAT ticket')

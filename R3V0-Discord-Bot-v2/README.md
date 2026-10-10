@@ -1,14 +1,16 @@
 # GOAT Clan Bot
 
-A complete English Discord bot for the GOAT Roblox clan, version **2.6.0**. To update **Zerqoon/test3** and the existing Railway service, start with **COMMUNITY-START-PL.md**, **UPDATE_V2_PL.md** and **UPLOAD-GITHUB.ps1**. Full hosting instructions are in **RAILWAY_SETUP_PL.md**; local setup is in **START_HERE_PL.md**.
+A complete English Discord bot for the GOAT Roblox clan, version **2.6.1**. To update **Zerqoon/test3** and the existing Railway service, start with **COMMUNITY-START-PL.md**, **UPDATE_V2_PL.md** and **UPLOAD-GITHUB.ps1**. Full hosting instructions are in **RAILWAY_SETUP_PL.md**; local setup is in **START_HERE_PL.md**.
 
 ## Recruitment controls
 
 - `/clan-off` pauses new clan applications and removes the Clan Application button. The embed shows **Recruitment Closed** and keeps the real occupied/reserved count. Existing conversations remain available.
-- `/open-ticket count:5` sets **five free places**, so the button displays **15/20**. The integer range is 1–20. Active undecided applications already reserve places and cannot be overwritten by a manual setting.
+- `/open-ticket count:0` marks the clan **full · 20/20** and removes the application button. `/open-ticket count:5` sets **five free places**, so the button displays **15/20**. The integer range is **0–20**. Active undecided applications already reserve places and keep their tickets and votes when the count is changed.
 - `/clan-status` privately shows occupied places, reserved applications, free places and panel synchronization. The panel itself shows current availability.
 
 Each new application reserves one of 20 places atomically. Acceptance converts its reservation into an occupied place exactly once; rejection or withdrawal frees it. At 20 occupied or reserved places, the panel shows **Clan Full · 20/20** and removes the application button. It returns after a place is released, unless manually paused. Reservations and settings survive redeploys. Stale forms and reopen requests recheck capacity and the blacklist. Existing undecided applications are reserved on upgrade; set the actual number of free places after updating, since the bot cannot infer current clan membership.
+
+The compact **GOAT · Ticket Center** uses full-width application and Support sections, clear status/count lines and a small GOAT thumbnail. Upgrades edit the existing panel, including an old panel with no buttons. Support availability remains independent of clan capacity.
 
 Role **1557809384166391918** blocks clan applications and all GIFs. `tickets.clanBlacklistRoleIds` and `linkFilter.gifBlockedRoleIds` configure these restrictions. The GIF restriction wins over approved providers, staff and role exceptions, and the otherwise unrestricted channel **1557577086351179866**. Support follows its opening hours; ordinary text, screenshots and approved non-GIF links remain available. Deletion feedback expires after ten seconds. Access checks remain private.
 
@@ -104,7 +106,7 @@ Privileged slash commands are registered without a default Discord permission ma
 
 ## Message log and link filter checks
 
-After deploying, confirm `/goat-status` shows **2.6.0**. Run `/message-logs test`; it sends one embed directly to **1557439487813091358**, independently of the delivery queue. `/message-logs status` privately shows the active version, destination, required channel permissions, latest edit/delete event times, pending evidence and delivery errors. Repair the reported access and use `/message-logs retry` if an older batch is waiting.
+After deploying, confirm `/goat-status` shows **2.6.1**. Run `/message-logs test`; it sends one embed directly to **1557439487813091358**, independently of the delivery queue. `/message-logs status` privately shows the active version, destination, required channel permissions, latest edit/delete event times, pending evidence and delivery errors. Repair the reported access and use `/message-logs retry` if an older batch is waiting.
 
 The bot needs **View Channel**, **Send Messages**, **Embed Links**, **Attach Files** and **Read Message History** in the message log channel. It needs access to source channels, **Manage Messages** to delete prohibited messages, and **Message Content Intent** enabled in Developer Portal. Raw Gateway capture cannot receive events from inaccessible channels or reconstruct content Discord never supplied. Already observed deleted text is retained; deletions from before installation/offline are not recoverable.
 
@@ -133,7 +135,7 @@ npm run preview
 npm run backup
 ```
 
-**228 tests pass.** They cover persistent hosting configuration, authorization, duration limits, DST periods, deduplication, archive safety, history recovery, clean audit formatting, log grouping and restart retries, human autoroles, new-join-only reminders, timed deletion recovery, private ticket overwrites, fresh access checks, participant repair, plain-text conversation pagination, required username forms, cross-category anti-spam, unique changeable votes, manual vote start, exact 180-second restart-safe deadlines, three-vote instant outcomes, majority without quorum, ties, retained votes after departure, slow-channel isolation, partial edit / delete evidence, public command replies, custom embed modal / selected-only mentions / validation / authorization / queued-delivery recovery, manual authorization and decision / DM restart recovery, delete-before-delivery protection, migration, giveaway roles and draw recovery, and temporary-ban protection. Version 2.4 adds provider/clip recognition, mixed-source rejection, the requested GIF channel exception, ten-second warnings, coalescing, nonce recovery, independent cleanup, role-grant DMs without backfill, audit/raw event deduplication, blocked/transient DM handling, migration, unbranded embeds, help pages and grouped ticket commands. Local tests use Discord API doubles; no live server or hosting login was supplied.
+**237 tests pass.** They cover persistent hosting configuration, authorization, duration limits, DST periods, deduplication, archive safety, history recovery, clean audit formatting, log grouping and restart retries, human autoroles, new-join-only reminders, timed deletion recovery, private ticket overwrites, fresh access checks, participant repair, plain-text conversation pagination, required username forms, cross-category anti-spam, unique changeable votes, manual vote start, exact 180-second restart-safe deadlines, three-vote instant outcomes, majority without quorum, ties, retained votes after departure, slow-channel isolation, partial edit / delete evidence, public command replies, custom embed modal / selected-only mentions / validation / authorization / queued-delivery recovery, manual authorization and decision / DM restart recovery, delete-before-delivery protection, migration, giveaway roles and draw recovery, and temporary-ban protection. Version 2.4 adds provider/clip recognition, mixed-source rejection, the requested GIF channel exception, ten-second warnings, coalescing, nonce recovery, independent cleanup, role-grant DMs without backfill, audit/raw event deduplication, blocked/transient DM handling, migration, unbranded embeds, help pages and grouped ticket commands. Local tests use Discord API doubles; no live server or hosting login was supplied.
 
 ## Layout
 
